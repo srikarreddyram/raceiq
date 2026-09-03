@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "RaceIQ — F1 race strategy intelligence platform"
 requires-python = ">=3.10"
 dependencies = [
+    "duckdb>=1.5.5",
     "fastf1>=3.8.3",
     "pandas>=2.3.3",
     "pyarrow>=25.0.1",
