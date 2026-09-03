@@ -1,0 +1,15 @@
+[project]
+name = "raceiq"
+version = "0.1.0"
+description = "RaceIQ — F1 race strategy intelligence platform"
+requires-python = ">=3.10"
+dependencies = [
+    "fastf1>=3.8.3",
+    "pandas>=2.3.3",
+    "pyarrow>=25.0.1",
+    "python-dotenv>=1.2.3",
+    "requests>=2.34.2",
+]
+
+[tool.uv]
+package = false
