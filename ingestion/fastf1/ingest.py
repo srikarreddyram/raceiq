@@ -22,7 +22,7 @@ def ingest_session(season: int, round_number: int, session_type: str, with_telem
     client.enable_cache(config.fastf1_cache_dir)
 
     logger.info("Loading FastF1 session season=%s round=%s type=%s", season, round_number, session_type)
-    session = client.load_session(season, round_number, session_type)
+    session = client.load_session(season, round_number, session_type, with_telemetry=with_telemetry)
 
     base_path = f"{season}/{round_number}/{session_type}"
     tables = {

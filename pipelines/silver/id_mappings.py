@@ -17,11 +17,10 @@ share a common key the way drivers do:
 For circuits and teams this module resolves FastF1's label to Ergast's
 canonical id via fuzzy string matching (`rapidfuzz`, already a transitive
 dependency of `fastf1`) against Ergast's own name/locality fields, rather
-than a hand-typed lookup table — with only one circuit backfilled so far
-(Bahrain 2023) a hardcoded table would be mostly guesses. Every match below
-`MATCH_THRESHOLD` is logged instead of silently applied, so as more seasons
-get backfilled, any bad match surfaces immediately rather than silently
-corrupting a join.
+than a hand-typed lookup table spanning every circuit/team across 2018-2026.
+Every match below `MATCH_THRESHOLD` is logged instead of silently applied,
+so any bad match surfaces immediately rather than silently corrupting a
+join.
 
 `STATIC_OVERRIDES` exists for the day fuzzy matching gets something wrong
 in practice — it takes precedence over the fuzzy match and should be
@@ -39,8 +38,22 @@ logger = logging.getLogger(__name__)
 
 MATCH_THRESHOLD = 70
 
-CIRCUIT_STATIC_OVERRIDES: dict[str, str] = {}
-TEAM_STATIC_OVERRIDES: dict[str, str] = {}
+CIRCUIT_STATIC_OVERRIDES: dict[str, str] = {
+    # FastF1's Location is the city/country the circuit is in; Ergast's
+    # locality is the specific district — for these three they share no
+    # words at all, so no fuzzy match can bridge them.
+    "Singapore": "marina_bay",  # Ergast locality: "Marina Bay"
+    "Yas Island": "yas_marina",  # Ergast locality: "Abu Dhabi"
+    # Hyphenation splits "Spa-Francorchamps" into one token, so it never
+    # matches the single word "Spa" via whitespace-tokenized scoring.
+    "Spa-Francorchamps": "spa",
+}
+TEAM_STATIC_OVERRIDES: dict[str, str] = {
+    # The team competed as "Racing Bulls" in 2025 after "RB" in 2024 and
+    # "AlphaTauri" before that; Ergast has not (yet, as of this data) split
+    # out a separate constructor_id for the newest name.
+    "Racing Bulls": "rb",
+}
 
 
 def _fuzzy_map(labels: list[str], candidates: dict[str, str], overrides: dict[str, str]) -> dict[str, str]:

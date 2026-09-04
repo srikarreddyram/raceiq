@@ -30,10 +30,20 @@ def enable_cache(cache_dir: Path) -> None:
         _cache_enabled = True
 
 
-def load_session(season: int, round_number: int, session_type: str = "R") -> fastf1.core.Session:
-    """Load one session (e.g. 2023 round 1 Race) with laps/weather/telemetry."""
+def load_session(
+    season: int, round_number: int, session_type: str = "R", with_telemetry: bool = False
+) -> fastf1.core.Session:
+    """Load one session (e.g. 2023 round 1 Race) with laps/weather/track status.
+
+    FastF1's own `telemetry` flag controls whether it fetches car/position
+    data (speed, throttle, brake, GPS, ...) from the API at all — separate
+    from our `extract_telemetry`, which only shapes that data once it's
+    already loaded. Every call to the FIA data feed counts against FastF1's
+    own rate limit (500/hour), so when nothing downstream needs telemetry
+    (the default), skip fetching it rather than pulling and discarding it.
+    """
     session = fastf1.get_session(season, round_number, session_type)
-    session.load()
+    session.load(telemetry=with_telemetry)
     return session
 
 

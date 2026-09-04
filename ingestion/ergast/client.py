@@ -36,3 +36,13 @@ def get_constructor_standings(season: int, round_number: int, config: IngestionC
 def get_circuits(season: int, config: IngestionConfig) -> dict[str, Any]:
     url = f"{config.ergast_base_url}/{season}/circuits.json"
     return get_json(url, config)
+
+
+def get_season_schedule(season: int, config: IngestionConfig) -> dict[str, Any]:
+    """Race calendar for a season — round numbers, dates, circuits.
+
+    Used by the backfill orchestrator to discover which rounds actually
+    exist for a season rather than guessing round counts.
+    """
+    url = f"{config.ergast_base_url}/{season}.json"
+    return get_json(url, config)
