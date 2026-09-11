@@ -4,12 +4,17 @@ version = "0.1.0"
 description = "RaceIQ — F1 race strategy intelligence platform"
 requires-python = ">=3.10"
 dependencies = [
+    "catboost>=1.2.10",
     "duckdb>=1.5.5",
     "fastf1>=3.8.3",
+    "lightgbm>=4.7.0",
+    "mlflow>=3.16.0",
     "pandas>=2.3.3",
     "pyarrow>=25.0.1",
     "python-dotenv>=1.2.3",
     "requests>=2.34.2",
+    "scikit-learn>=1.7.2",
+    "xgboost>=3.2.0",
 ]
 
 [tool.uv]

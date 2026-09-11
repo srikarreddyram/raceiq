@@ -39,6 +39,23 @@ Two window-function features worth knowing how they work:
 `gap_to_car_ahead`/`gap_to_car_behind` are derived from `gap_to_leader`
 (already computed in Silver) rather than re-deriving cumulative time,
 since the leader term cancels out in the subtraction — see the SQL below.
+
+`safety_car_active`/`yellow_active`/`vsc_active`/`red_flag_active` are
+derived from `track_status_code` — FastF1's own per-lap summary string,
+which can hold multiple digits (e.g. "24" means both Yellow(2) and
+SafetyCar(4) occurred at some point during that lap) — rather than from
+an as-of join against the race-wide TrackStatus *event* stream
+(silver.track_status). An earlier version used that event-stream join,
+which locates each status change against the shared lap-boundary timeline
+(lap_timeline.py's median-across-drivers approximation) — precise for
+"which lap was this event near," but imprecise by about a lap right at a
+flag transition. That imprecision was invisible until a Lap Time model
+trained on it showed the exact signature: several drivers jumping ~35-45s
+at the identical lap number, with the flag column still reading "Clear."
+The per-lap summary string doesn't have that boundary-approximation
+problem — it's FastF1's own record of what happened *during* the lap that
+already finished, so using it is strictly current/past information, not a
+leakage risk.
 """
 
 from __future__ import annotations
@@ -104,9 +121,11 @@ SELECT
     wt.rival_team_id,
     wt.rival_compound,
     wt.rival_tyre_age,
-    ts.status_type AS track_status_active,
-    COALESCE(ts.status_type = 'SafetyCar', FALSE) AS safety_car_active,
-    COALESCE(ts.status_type IN ('Yellow', 'VSC', 'VSCEnding'), FALSE) AS yellow_active,
+    wt.track_status_code,
+    COALESCE(wt.track_status_code LIKE '%4%', FALSE) AS safety_car_active,
+    COALESCE(wt.track_status_code LIKE '%2%', FALSE) AS yellow_active,
+    COALESCE(wt.track_status_code LIKE '%6%' OR wt.track_status_code LIKE '%7%', FALSE) AS vsc_active,
+    COALESCE(wt.track_status_code LIKE '%5%', FALSE) AS red_flag_active,
     wthr.air_temp,
     wthr.track_temp,
     wthr.humidity,
@@ -125,8 +144,6 @@ SELECT
     (wt.lap_time_seconds - wt.stint_first_lap_time) AS grip_estimate
 FROM with_tyre wt
 LEFT JOIN race_totals rt ON rt.race_id = wt.race_id
-ASOF LEFT JOIN silver.track_status ts
-    ON wt.race_id = ts.race_id AND wt.lap_number >= ts.lap_number
 ASOF LEFT JOIN silver.weather wthr
     ON wt.race_id = wthr.race_id AND wt.lap_number >= wthr.lap_number
 """

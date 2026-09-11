@@ -31,6 +31,10 @@ data/gold/
 # MLflow
 mlruns/
 mlartifacts/
+mlflow.db
+
+# CatBoost training artifacts
+catboost_info/
 
 # Jupyter
 .ipynb_checkpoints/
