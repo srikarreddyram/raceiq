@@ -1,0 +1,138 @@
+"""Gold Lap Features — PRD Section 10.6 (Race State), 10.5 (Weather, partial),
+10.2 (Tyre, partial).
+
+This is the base fact table at the PRD's stated Gold grain: one row per lap
+per driver. Every feature here is computable in real time from information
+that exists at or before the current lap in the *same* race — nothing here
+looks at a future lap or a future race, so this table alone introduces no
+temporal leakage. Cross-race historical features (driver form, circuit
+baselines) live separately in `driver_history.py` / `circuit_history.py`,
+which need their own leakage discipline (as-of-race-date, prior races
+only) and shouldn't be mixed into this same-race logic.
+
+Two PRD-named fields are deliberately NOT built here:
+
+- `rain_probability_next_10_laps` would require looking at laps *after*
+  the current one within the same race. Since our weather source is
+  actual observed history, not a real forecast feed, computing this from
+  future laps would mean training on the literal answer — exactly the
+  leakage the PRD's "zero data leakage" success criterion guards against.
+  It's left out until a genuine forecast source is wired in.
+- `predicted_remaining_life` (tyre) and the team-operating-window fields
+  are model/CarProfile outputs, not engineered inputs — they don't belong
+  in the feature store that feeds those models.
+
+Two window-function features worth knowing how they work:
+
+- `degradation_rate`: an *expanding* linear regression slope of lap time
+  against tyre age, computed with DuckDB's `regr_slope` as a window
+  aggregate restricted to `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT
+  ROW` within each (race, driver, stint) — i.e. "the degradation trend
+  using only laps completed so far this stint," never future laps. It's
+  NULL for a stint's first lap or two (not enough points to fit a slope)
+  and doesn't exclude Safety Car / VSC laps from the fit, which can skew
+  it — a known simplification, not a correctness bug.
+- `grip_estimate`: lap time minus that stint's first lap time (via
+  `FIRST_VALUE` over the same expanding frame) — pace lost relative to a
+  fresh-tyre baseline, PRD's definition verbatim.
+
+`gap_to_car_ahead`/`gap_to_car_behind` are derived from `gap_to_leader`
+(already computed in Silver) rather than re-deriving cumulative time,
+since the leader term cancels out in the subtraction — see the SQL below.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import duckdb
+
+logger = logging.getLogger(__name__)
+
+_SQL = """
+CREATE OR REPLACE TABLE gold.lap_features AS
+WITH race_totals AS (
+    SELECT race_id, MAX(lap_number) AS race_total_laps
+    FROM silver.laps
+    GROUP BY race_id
+),
+rival_joined AS (
+    SELECT
+        l.*,
+        LAG(l.driver_id) OVER w AS rival_driver_id,
+        LAG(l.team_id) OVER w AS rival_team_id,
+        LAG(l.compound) OVER w AS rival_compound,
+        LAG(l.tyre_age) OVER w AS rival_tyre_age,
+        LAG(l.gap_to_leader) OVER w AS ahead_gap_to_leader,
+        LEAD(l.gap_to_leader) OVER w AS behind_gap_to_leader
+    FROM silver.laps l
+    WINDOW w AS (PARTITION BY l.race_id, l.lap_number ORDER BY l.position)
+),
+with_field_avg AS (
+    SELECT
+        rj.*,
+        AVG(lap_time_seconds) FILTER (WHERE NOT is_pit_lap)
+            OVER (PARTITION BY race_id, lap_number) AS field_avg_lap_time_seconds
+    FROM rival_joined rj
+),
+with_tyre AS (
+    SELECT
+        wfa.*,
+        regr_slope(lap_time_seconds, tyre_age) FILTER (WHERE NOT is_pit_lap) OVER stint_so_far
+            AS degradation_rate,
+        FIRST_VALUE(CASE WHEN is_pit_lap THEN NULL ELSE lap_time_seconds END IGNORE NULLS)
+            OVER stint_so_far AS stint_first_lap_time
+    FROM with_field_avg wfa
+    WINDOW stint_so_far AS (
+        PARTITION BY race_id, driver_id, stint_number ORDER BY lap_number
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    )
+)
+SELECT
+    wt.lap_id,
+    wt.race_id,
+    wt.driver_id,
+    wt.team_id,
+    wt.lap_number,
+    rt.race_total_laps - wt.lap_number AS laps_remaining,
+    wt.position AS current_position,
+    wt.gap_to_leader,
+    (wt.gap_to_leader - wt.ahead_gap_to_leader) AS gap_to_car_ahead,
+    (wt.behind_gap_to_leader - wt.gap_to_leader) AS gap_to_car_behind,
+    COALESCE((wt.gap_to_leader - wt.ahead_gap_to_leader) < 1.0, FALSE) AS traffic_flag,
+    wt.rival_driver_id,
+    wt.rival_team_id,
+    wt.rival_compound,
+    wt.rival_tyre_age,
+    ts.status_type AS track_status_active,
+    COALESCE(ts.status_type = 'SafetyCar', FALSE) AS safety_car_active,
+    COALESCE(ts.status_type IN ('Yellow', 'VSC', 'VSCEnding'), FALSE) AS yellow_active,
+    wthr.air_temp,
+    wthr.track_temp,
+    wthr.humidity,
+    wthr.wind_speed,
+    wthr.wind_direction,
+    COALESCE(wthr.rainfall, FALSE) AS rainfall_flag,
+    wt.compound,
+    wt.tyre_age,
+    wt.stint_number,
+    wt.is_pit_lap,
+    wt.pit_stop_duration,
+    wt.lap_time_seconds,
+    wt.field_avg_lap_time_seconds,
+    (wt.lap_time_seconds - wt.field_avg_lap_time_seconds) AS pace_delta_this_lap,
+    wt.degradation_rate,
+    (wt.lap_time_seconds - wt.stint_first_lap_time) AS grip_estimate
+FROM with_tyre wt
+LEFT JOIN race_totals rt ON rt.race_id = wt.race_id
+ASOF LEFT JOIN silver.track_status ts
+    ON wt.race_id = ts.race_id AND wt.lap_number >= ts.lap_number
+ASOF LEFT JOIN silver.weather wthr
+    ON wt.race_id = wthr.race_id AND wt.lap_number >= wthr.lap_number
+"""
+
+
+def build(con: duckdb.DuckDBPyConnection) -> None:
+    con.execute(_SQL)
+    count = con.execute("SELECT COUNT(*) FROM gold.lap_features").fetchone()[0]
+    logger.info("gold.lap_features: %s rows", count)
