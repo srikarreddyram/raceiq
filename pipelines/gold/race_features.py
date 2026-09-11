@@ -27,7 +27,8 @@ SELECT
     dh.overtaking_score AS driver_overtaking_score,
     ch.prior_races_at_circuit,
     ch.circuit_baseline_track_temp,
-    ch.condition_delta
+    ch.condition_delta,
+    ch.historical_sc_rate
 FROM gold.lap_features lf
 LEFT JOIN gold.driver_history dh ON dh.driver_id = lf.driver_id AND dh.race_id = lf.race_id
 LEFT JOIN gold.circuit_history ch ON ch.race_id = lf.race_id
