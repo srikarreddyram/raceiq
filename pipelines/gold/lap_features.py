@@ -56,6 +56,17 @@ The per-lap summary string doesn't have that boundary-approximation
 problem — it's FastF1's own record of what happened *during* the lap that
 already finished, so using it is strictly current/past information, not a
 leakage risk.
+
+`field_avg_lap_time_seconds`, `degradation_rate`, and `stint_first_lap_time`
+all exclude red-flagged laps (`is_red_flag_lap`, computed early enough in
+the CTE chain to gate these), not just pit laps. This was found training
+a second lap-time model (an LSTM, models/lap_time_sequence/) whose
+validation loss stayed inexplicably ~10x worse than test loss throughout
+training: a 2024 race's red flag left every driver's lap 1 recorded at
+~2,500 seconds (FastF1's lap time spans the full session-clock stoppage,
+not real pace), and because `degradation_rate` is an *expanding* window
+regression, that one lap didn't just corrupt its own row — it corrupted
+every later lap's fitted degradation rate for that whole stint.
 """
 
 from __future__ import annotations
@@ -81,23 +92,34 @@ rival_joined AS (
         LAG(l.compound) OVER w AS rival_compound,
         LAG(l.tyre_age) OVER w AS rival_tyre_age,
         LAG(l.gap_to_leader) OVER w AS ahead_gap_to_leader,
-        LEAD(l.gap_to_leader) OVER w AS behind_gap_to_leader
+        LEAD(l.gap_to_leader) OVER w AS behind_gap_to_leader,
+        -- Computed here (rather than only in the final SELECT, where the
+        -- equivalent red_flag_active column also lives) so it can gate the
+        -- field-average and degradation-rate windows below. A red-flagged
+        -- lap's recorded time spans the full session-clock stoppage, not
+        -- real pace (one 2024 race shows every driver's lap 1 at ~2,500
+        -- seconds) — left unfiltered, one such lap would corrupt not just
+        -- its own row but *every later lap's* degradation_rate in that
+        -- stint, since that window is an expanding regression over all
+        -- laps so far.
+        COALESCE(l.track_status_code LIKE '%5%', FALSE) AS is_red_flag_lap
     FROM silver.laps l
     WINDOW w AS (PARTITION BY l.race_id, l.lap_number ORDER BY l.position)
 ),
 with_field_avg AS (
     SELECT
         rj.*,
-        AVG(lap_time_seconds) FILTER (WHERE NOT is_pit_lap)
+        AVG(lap_time_seconds) FILTER (WHERE NOT is_pit_lap AND NOT is_red_flag_lap)
             OVER (PARTITION BY race_id, lap_number) AS field_avg_lap_time_seconds
     FROM rival_joined rj
 ),
 with_tyre AS (
     SELECT
         wfa.*,
-        regr_slope(lap_time_seconds, tyre_age) FILTER (WHERE NOT is_pit_lap) OVER stint_so_far
+        regr_slope(lap_time_seconds, tyre_age)
+            FILTER (WHERE NOT is_pit_lap AND NOT is_red_flag_lap) OVER stint_so_far
             AS degradation_rate,
-        FIRST_VALUE(CASE WHEN is_pit_lap THEN NULL ELSE lap_time_seconds END IGNORE NULLS)
+        FIRST_VALUE(CASE WHEN is_pit_lap OR is_red_flag_lap THEN NULL ELSE lap_time_seconds END IGNORE NULLS)
             OVER stint_so_far AS stint_first_lap_time
     FROM with_field_avg wfa
     WINDOW stint_so_far AS (
@@ -125,7 +147,7 @@ SELECT
     COALESCE(wt.track_status_code LIKE '%4%', FALSE) AS safety_car_active,
     COALESCE(wt.track_status_code LIKE '%2%', FALSE) AS yellow_active,
     COALESCE(wt.track_status_code LIKE '%6%' OR wt.track_status_code LIKE '%7%', FALSE) AS vsc_active,
-    COALESCE(wt.track_status_code LIKE '%5%', FALSE) AS red_flag_active,
+    wt.is_red_flag_lap AS red_flag_active,
     wthr.air_temp,
     wthr.track_temp,
     wthr.humidity,

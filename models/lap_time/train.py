@@ -87,6 +87,12 @@ def prepare_dataset() -> pd.DataFrame:
         df[f"next_{flag}"] = df.groupby(["race_id", "driver_id"])[flag].shift(-1)
     df = add_next_lap_time_target(df)
     df = df.dropna(subset=[TARGET, "lap_time_seconds"])
+    # A red-flag-affected lap's recorded time spans the full session-clock
+    # stoppage, not real pace (one 2024 race shows every driver's lap 1 at
+    # ~2,500 seconds) — since the target here is the *next* lap's time, a
+    # row is unusable whenever the lap it's predicting into was red-flagged,
+    # even if the row's own current lap looks perfectly normal.
+    df = df[df["next_red_flag_active"] != 1]
     for col in BOOLEAN_FEATURES:
         df[col] = df[col].astype(int)
     df = apply_categorical_dtypes(df, CATEGORICAL_COLUMNS)
