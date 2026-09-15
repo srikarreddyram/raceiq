@@ -47,6 +47,17 @@ CIRCUIT_STATIC_OVERRIDES: dict[str, str] = {
     # Hyphenation splits "Spa-Francorchamps" into one token, so it never
     # matches the single word "Spa" via whitespace-tokenized scoring.
     "Spa-Francorchamps": "spa",
+    # Two confirmed silent false positives, found by manually auditing every
+    # resolved mapping rather than only the ones that logged as unmapped —
+    # a *wrong* match above MATCH_THRESHOLD raises no warning on its own.
+    # "Monaco" (the country, FastF1's label for some seasons) scores higher
+    # against "Monza" (72.7, short shared prefix) than against the correct
+    # locality "Monte Carlo" (35.3) — every Monaco race using this label
+    # was silently attributed to Monza until this was added. Likewise
+    # "Yas Marina" scored higher against Singapore's "Marina Bay" (shared
+    # word) than against its own locality "Abu Dhabi".
+    "Monaco": "monaco",
+    "Yas Marina": "yas_marina",
 }
 TEAM_STATIC_OVERRIDES: dict[str, str] = {
     # The team competed as "Racing Bulls" in 2025 after "RB" in 2024 and
