@@ -50,17 +50,24 @@ next fix undid the previous one's approach:**
    prevent this; a tree model's prediction surface isn't smooth enough
    for self-referential chaining to be reliable over a full-race horizon.
 
-What ships here reflects all four lessons: safety-car draws and lap-time
-noise are shared across every candidate (`build_shared_context`, true
-common random numbers), a safety car's pace effect never touches the
-gap-to-leader directly, and — the one real, acknowledged gap against the
-PRD's vision — candidate strategies are differentiated by tyre-life
-feasibility (filtered at search time via the Tyre Degradation model, see
-search/candidates.py), pit count and timing, and safety-car luck, not by
-fine-grained predicted pace differences between compounds. Closing that
-gap needs either a smoother model for multi-lap-ahead prediction or a
-non-autoregressive way to query the Lap Time model that doesn't compound
-its own output — noted as follow-up work, not silently worked around.
+**Round 5 closed that gap.** models/lap_time_sequence/ trains an LSTM that
+takes a candidate's entire deterministic tyre/pit covariate sequence and
+predicts every lap's time in one forward pass — no autoregressive
+feedback loop, so nothing to chain into chaos. `lstm_oracle.py` wraps it;
+`pace_deviation` below uses it to compare a strategy's actual predicted
+green-flag pace against the field average, restoring the tyre/compound
+differentiation round 4 had to give up. It isn't free of failure modes of
+its own, though: a wet-race snapshot (a long INTERMEDIATE stint on a
+drying track — rare enough in training data to be near-unseen) produced
+an implied ~1.7s/lap sustained improvement, physically not impossible on
+a drying track, but confident enough at N=5,000 to make an actual leader
+show a flat, noise-proof 100% win probability. `PACE_DEVIATION_CAP_PER_LAP`
+bounds that risk pragmatically (clip to a generous but finite per-lap
+effect) rather than resolving the deeper question of whether that specific
+prediction was correct or an extrapolation artifact — a proper fix would
+have the model report its own uncertainty (e.g. quantile regression) so a
+rare, low-confidence scenario widens this simulation's noise instead of
+narrowing it to a point estimate.
 
 Two more simplifications, documented where they matter:
 - Rivals' future pace projects their *current* trend forward over a
@@ -86,15 +93,19 @@ from models.common.registry import load_latest_model
 from models.safety_car.train import FEATURE_COLUMNS as SAFETY_CAR_FEATURES
 from models.safety_car.train import WINDOW_LAPS as SAFETY_CAR_WINDOW_LAPS
 from strategy_engine.field import RivalTrend
+from strategy_engine.lstm_oracle import predict_trajectory
 from strategy_engine.model_features import apply_reference_categoricals
 from strategy_engine.pit_loss import typical_pit_loss_seconds
 from strategy_engine.search.candidates import Strategy
 from strategy_engine.state import RaceState
+from strategy_engine.tyre_baselines import typical_degradation_rate
 
 LAP_TIME_NOISE_SECONDS = 1.2  # grounded in the Lap Time model's own measured stable-regime RMSE (~1.07s)
 RIVAL_PACE_NOISE_PER_LAP = 0.5
 RIVAL_TREND_HORIZON_LAPS = 10  # how far a rival's short-term (5-lap) pace trend is projected before reverting to neutral
 SC_PIT_DISCOUNT = 0.3  # fraction of pit loss still paid if the stop lands under a simulated safety car
+MAX_TYRE_AGE_FOR_SIMULATION = 35  # near the 99th percentile observed stint length across compounds in training data
+PACE_DEVIATION_CAP_PER_LAP = 2.0  # seconds/lap; see simulate_strategy's use for why this exists
 
 
 @dataclass
@@ -142,6 +153,58 @@ def _deterministic_pit_plan(state: RaceState, strategy: Strategy) -> list[bool]:
     return [lap in pit_laps for lap in range(state.current_lap + 1, state.race_total_laps + 1)]
 
 
+def _deterministic_tyre_plan(state: RaceState, strategy: Strategy) -> list[dict]:
+    """One entry per remaining lap: the compound/tyre_age/stint_number/
+    degradation trend that lap runs under — fixed by the strategy, and the
+    input the LSTM oracle (lstm_oracle.py) needs to score the whole
+    remaining race in one forward pass.
+
+    Note the `pd.isna` check rather than `x or default`: `float('nan') or
+    default` evaluates to `nan`, not `default` — NaN is truthy in Python —
+    which silently let a real NaN (e.g. the race leader's gap_to_car_ahead,
+    or a driver debuting on a fresh compound with no degradation_rate yet)
+    slip through a naive fallback and propagate NaN through every later
+    lap once accumulated. Found via this exact symptom: predict_trajectory
+    returning an all-NaN array end to end.
+    """
+    pit_map = dict(strategy.pit_plan)
+    compound = state.compound
+    tyre_age = state.tyre_age
+    stint_number = state.stint_number
+    degradation_rate = (
+        state.degradation_rate
+        if state.degradation_rate is not None and not pd.isna(state.degradation_rate)
+        else typical_degradation_rate(state.circuit_id, compound)
+    )
+    grip_estimate = state.grip_estimate if state.grip_estimate is not None and not pd.isna(state.grip_estimate) else 0.0
+
+    plan = []
+    for lap in range(state.current_lap + 1, state.race_total_laps + 1):
+        is_pit_lap = lap in pit_map
+        if is_pit_lap:
+            compound = pit_map[lap]
+            tyre_age = 0.0
+            stint_number += 1
+            degradation_rate = typical_degradation_rate(state.circuit_id, compound)
+            grip_estimate = 0.0
+        elif tyre_age < MAX_TYRE_AGE_FOR_SIMULATION:
+            tyre_age += 1
+            grip_estimate += degradation_rate
+
+        plan.append(
+            {
+                "lap_number": lap,
+                "compound": compound,
+                "tyre_age": tyre_age,
+                "stint_number": stint_number,
+                "degradation_rate": degradation_rate,
+                "grip_estimate": grip_estimate,
+                "is_pit_lap": is_pit_lap,
+            }
+        )
+    return plan
+
+
 def build_shared_context(state: RaceState, n_simulations: int, rng: np.random.Generator) -> SharedContext:
     """Computed once per race state, reused for every candidate strategy —
     the safety-car draws and lap-time noise, shared so every strategy is
@@ -181,19 +244,39 @@ def simulate_strategy(
 
     # A safety car slows the whole field by roughly the same amount — the
     # leader is under the same caution as everyone else — so it doesn't
-    # move this driver's *gap to the leader* on its own. Only two things
+    # move this driver's *gap to the leader* on its own. Only three things
     # legitimately do that here: this strategy's own pit stop cost (only
     # this driver stops, discounted if it lands under a simulated SC — PRD
-    # 12.6's "pitting under a safety car is free track position"), and
-    # idiosyncratic lap-to-lap noise. See the module docstring for what
-    # else was tried here and why it didn't hold up.
+    # 12.6's "pitting under a safety car is free track position"),
+    # idiosyncratic lap-to-lap noise, and — unlike every earlier attempt in
+    # this module's history — this strategy's actual predicted green-flag
+    # pace vs. the field average, now that the LSTM oracle
+    # (lstm_oracle.py) can produce that trajectory in one forward pass
+    # with no autoregressive chaining to go unstable. See the module
+    # docstring for the four rounds of bugs that came from trying this
+    # with a chained single-step model instead.
     pit_time_loss = np.zeros((n_simulations, shared.n_laps))
     for i, scheduled in enumerate(is_pit_lap):
         if scheduled:
             discount = np.where(shared.sc_occurs[:, i], SC_PIT_DISCOUNT, 1.0)
             pit_time_loss[:, i] = pit_loss * discount
 
-    cumulative_deviation = (shared.noise + pit_time_loss).sum(axis=1)
+    tyre_plan = _deterministic_tyre_plan(state, strategy)
+    green_times, _sc_times = predict_trajectory(state, tyre_plan)
+    pace_deviation_per_lap = float(green_times.mean() - state.field_avg_lap_time_seconds)
+    # A wet-race snapshot (long INTERMEDIATE stint, track drying) surfaced a
+    # prediction implying ~1.7s/lap of sustained improvement — physically
+    # not impossible on a drying track, but a large enough claim, for a
+    # combination of covariates sparse enough in training, that it
+    # deserves a skeptical bound rather than blind trust: at N=5,000 sims
+    # it made an actual race leader's win probability a flat, noise-proof
+    # 100%. Clipped to a generous per-lap bound that's still well above the
+    # ~0.5-1s/lap differences seen between reasonable candidate strategies
+    # in normal (dry, in-distribution) scenarios.
+    pace_deviation_per_lap = float(np.clip(pace_deviation_per_lap, -PACE_DEVIATION_CAP_PER_LAP, PACE_DEVIATION_CAP_PER_LAP))
+    pace_deviation = pace_deviation_per_lap * shared.n_laps
+
+    cumulative_deviation = pace_deviation + (shared.noise + pit_time_loss).sum(axis=1)
     our_final_gap = state.gap_to_leader + cumulative_deviation
 
     # A rival's recent pace trend is measured over a short (5-lap) window and
