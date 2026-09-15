@@ -38,6 +38,7 @@ from models.common.targets import add_safety_car_within_n_target
 from models.common.tracking import configure_experiment
 
 TARGET = "safety_car_within_n_laps"
+WINDOW_LAPS = 5  # must match the `n` passed to add_safety_car_within_n_target below
 CATEGORICAL_COLUMNS = ["circuit_id"]
 NUMERIC_FEATURES = [
     "lap_number",
@@ -52,7 +53,7 @@ FEATURE_COLUMNS = NUMERIC_FEATURES + BOOLEAN_FEATURES + CATEGORICAL_COLUMNS
 
 def prepare_dataset() -> pd.DataFrame:
     df = load_race_features()
-    df = add_safety_car_within_n_target(df, n=5)
+    df = add_safety_car_within_n_target(df, n=WINDOW_LAPS)
 
     race_level = (
         df.groupby(["race_id", "lap_number"])
