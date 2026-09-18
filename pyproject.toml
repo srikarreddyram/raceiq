@@ -22,3 +22,16 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+# This project isn't installed as a package (package = false above), and
+# every script here is already run as `uv run python -m <pkg>.<mod>` from
+# the repo root, which relies on the CWD being on sys.path. pytest needs
+# the same thing spelled out explicitly.
+pythonpath = ["."]
+testpaths = ["tests"]
