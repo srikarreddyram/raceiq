@@ -29,7 +29,7 @@ def recommend_strategy(state: RaceState, rivals: list, n_simulations: int = 5000
 
     # Built once and reused for every candidate — see monte_carlo.py's
     # docstring on why comparing strategies needs shared randomness.
-    shared = build_shared_context(state, n_simulations, rng)
+    shared = build_shared_context(state, rivals, n_simulations, rng)
 
     scored = []
     for strategy in candidates:

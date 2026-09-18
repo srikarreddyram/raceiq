@@ -100,7 +100,7 @@ def simulate(request: SimulateRequest) -> SimulateResponse:
         label=", ".join(f"Pit lap {lap} -> {compound}" for lap, compound in request.pit_plan) or "No further stops",
     )
     rng = np.random.default_rng()
-    shared = build_shared_context(state, request.n_simulations, rng)
+    shared = build_shared_context(state, rivals, request.n_simulations, rng)
     result = simulate_strategy(state, strategy, rivals, shared)
     scored = score_strategy(result)
 

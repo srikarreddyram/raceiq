@@ -65,6 +65,7 @@ class RaceState:
     driver_overtaking_score: float | None
     condition_delta: float | None
     historical_sc_rate: float | None
+    historical_dnf_rate: float | None
     circuit_baseline_track_temp: float | None
 
     # The car directly ahead — the only rival our Gold features actually
@@ -125,6 +126,7 @@ class RaceState:
             driver_overtaking_score=row.get("driver_overtaking_score"),
             condition_delta=row.get("condition_delta"),
             historical_sc_rate=row.get("historical_sc_rate"),
+            historical_dnf_rate=row.get("historical_dnf_rate"),
             circuit_baseline_track_temp=row.get("circuit_baseline_track_temp"),
             rival_ahead=rival,
             compounds_used_this_race={row["compound"]},

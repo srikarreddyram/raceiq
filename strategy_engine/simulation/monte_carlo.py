@@ -84,19 +84,22 @@ Three more simplifications, documented where they matter:
   own example reasoning) is modeled as a discount on this driver's own
   pit loss when it lands on a simulated SC lap — rivals bunching up under
   that same SC isn't modeled, so this understates the real effect.
-- No attrition/DNF modeling: rivals are never modeled as retiring, so a
-  driver who's already last stays modeled as last for the whole race with
-  zero chance of inheriting a position from someone else's mechanical
-  failure or crash. Found via the Final Race Position model cross-check
-  (oracles.predict_expected_finish_now): for a real last-placed driver
-  (Bahrain 2025, lap 20, bortoleto — genuinely P20), the classifier's
-  historically-grounded estimate was P12.5 while the simulation's best
-  strategy still showed P20.0. `bronze.ergast_results` already carries a
-  `status` column (Finished/Retired/Accident/...) that could ground a
-  per-circuit historical retirement rate the same way `historical_sc_rate`
-  already grounds safety car probability — not built yet; it needs a new
-  Silver/Gold column, not just a strategy_engine change, so it's recorded
-  here rather than patched around.
+- Rival attrition/DNF is now modeled too, added for the same reason as the
+  pit-stop fix above: the Final Race Position model cross-check
+  (oracles.predict_expected_finish_now) found that for a real last-placed
+  driver (Bahrain 2025, lap 20, bortoleto — genuinely P20), the
+  classifier's historically-grounded estimate was P12.5 while the
+  simulation's best strategy still showed a flat P20.0 — because rivals
+  were never modeled as retiring, so a driver already last had zero
+  chance of inheriting a place from someone else's mechanical failure or
+  crash. `gold.circuit_history.historical_dnf_rate` (built the same way
+  as `historical_sc_rate`, from `bronze.ergast_results.status`) now grounds
+  a per-rival retirement draw in `build_shared_context`, converted from a
+  full-race rate to a remaining-laps probability the same way the safety
+  car model's window probability is converted to a per-lap hazard. This
+  only models RIVALS retiring — our own driver's retirement risk isn't
+  modeled, since the engine's job is recommending a strategy assuming they
+  finish, not risk-adjusting for their own mechanical failure.
 """
 
 from __future__ import annotations
@@ -123,6 +126,7 @@ RIVAL_TREND_HORIZON_LAPS = 10  # how far a rival's short-term (5-lap) pace trend
 SC_PIT_DISCOUNT = 0.3  # fraction of pit loss still paid if the stop lands under a simulated safety car
 MAX_TYRE_AGE_FOR_SIMULATION = 35  # near the 99th percentile observed stint length across compounds in training data
 PACE_DEVIATION_CAP_PER_LAP = 2.0  # seconds/lap; see simulate_strategy's use for why this exists
+DEFAULT_DNF_RATE = 0.15  # this project's own dataset-wide average, for circuits with no prior-race history yet
 
 
 @dataclass
@@ -135,14 +139,16 @@ class SimulationResult:
 @dataclass
 class SharedContext:
     """Randomness computed once per race state and reused across every
-    candidate strategy so they're all compared under identical safety-car
-    and noise conditions (see module docstring on why sharing this
-    matters, and why it deliberately carries no reference trajectory).
+    candidate strategy so they're all compared under identical safety-car,
+    noise, and rival-retirement conditions (see module docstring on why
+    sharing this matters, and why it deliberately carries no reference
+    trajectory).
     """
 
     n_laps: int
     sc_occurs: np.ndarray  # shape (n_simulations, n_laps)
     noise: np.ndarray  # shape (n_simulations, n_laps)
+    rival_retires: np.ndarray  # shape (n_simulations, n_rivals), bool — see build_shared_context
 
 
 def _safety_car_row(state: RaceState, lap_number: int) -> pd.DataFrame:
@@ -222,10 +228,13 @@ def _deterministic_tyre_plan(state: RaceState, strategy: Strategy) -> list[dict]
     return plan
 
 
-def build_shared_context(state: RaceState, n_simulations: int, rng: np.random.Generator) -> SharedContext:
+def build_shared_context(
+    state: RaceState, rivals: list[RivalTrend], n_simulations: int, rng: np.random.Generator
+) -> SharedContext:
     """Computed once per race state, reused for every candidate strategy —
-    the safety-car draws and lap-time noise, shared so every strategy is
-    evaluated under identical random conditions (common random numbers).
+    the safety-car draws, lap-time noise, and rival-retirement draws,
+    shared so every strategy is evaluated under identical random
+    conditions (common random numbers).
     """
     n_laps = state.race_total_laps - state.current_lap
     safety_car_model = load_latest_model("safety_car_probability")
@@ -246,7 +255,24 @@ def build_shared_context(state: RaceState, n_simulations: int, rng: np.random.Ge
     sc_occurs = rng.random((n_simulations, n_laps)) < sc_probs[None, :]
     noise = rng.normal(0, LAP_TIME_NOISE_SECONDS, size=(n_simulations, n_laps))
 
-    return SharedContext(n_laps=n_laps, sc_occurs=sc_occurs, noise=noise)
+    # A rival's chance of retiring somewhere in the *remaining* laps, from
+    # this circuit's historical full-race DNF rate via the same "at least
+    # one event over a window" conversion used for the safety-car model
+    # above (p_full_race is the "window", n_laps/race_total_laps of it is
+    # the fraction still ahead of us). One draw per (simulation, rival),
+    # identical across every candidate strategy — a rival's real-world
+    # retirement doesn't depend on what tyre strategy WE choose. See
+    # module docstring for why this exists: without it, a driver who is
+    # already last has no modeled chance of inheriting a place.
+    p_dnf_full_race = (
+        state.historical_dnf_rate
+        if state.historical_dnf_rate is not None and not pd.isna(state.historical_dnf_rate)
+        else DEFAULT_DNF_RATE
+    )
+    p_dnf_remaining = 1 - (1 - p_dnf_full_race) ** (n_laps / state.race_total_laps)
+    rival_retires = rng.random((n_simulations, len(rivals))) < p_dnf_remaining
+
+    return SharedContext(n_laps=n_laps, sc_occurs=sc_occurs, noise=noise, rival_retires=rival_retires)
 
 
 def simulate_strategy(
@@ -334,6 +360,13 @@ def simulate_strategy(
         ],
         axis=0,
     )  # shape (n_rivals, n_simulations)
+
+    # A retired rival (shared.rival_retires, drawn once per race state and
+    # reused for every candidate — see build_shared_context) no longer
+    # finishes ahead of anyone, regardless of the gap they were projected
+    # to hold. shape (n_simulations, n_rivals) -> (n_rivals, n_simulations)
+    # to match rival_final_gaps.
+    rival_final_gaps = np.where(shared.rival_retires.T, np.inf, rival_final_gaps)
 
     final_position = 1 + (rival_final_gaps < our_final_gap[None, :]).sum(axis=0)
 
