@@ -72,7 +72,16 @@ def main() -> None:
     print(f"train={len(train)} val={len(val)} test={len(test)}")
 
     model = lgb.LGBMRegressor(
-        objective="regression", n_estimators=1000, learning_rate=0.05, num_leaves=63, random_state=42
+        objective="regression",
+        n_estimators=1000,
+        learning_rate=0.05,
+        num_leaves=63,
+        random_state=42,
+        # See models/win_probability/train.py's comment: random_state
+        # alone doesn't make LightGBM's multi-threaded training fully
+        # reproducible — pinned here for the same reason.
+        deterministic=True,
+        force_row_wise=True,
     )
     model.fit(
         train[FEATURE_COLUMNS],

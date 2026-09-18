@@ -40,6 +40,18 @@ NUMERIC_FEATURES = [
     "driver_overtaking_score",
     "condition_delta",
 ]
+# historical_dnf_rate (added to strategy_engine's Monte Carlo simulation
+# to model rival attrition — see simulation/monte_carlo.py) was tried here
+# too, on the theory that a driver's win chances depend partly on how many
+# rivals are likely to retire ahead of them. Tested honestly on held-out
+# 2025 data and reverted: it made this model slightly worse, not better
+# (log_loss 0.109 -> 0.121, AUC 0.964 -> 0.960, same train/test split,
+# otherwise-identical run). Most likely reason: it's a single coarse
+# circuit+era-level scalar with no per-lap variation and no interaction
+# with laps_remaining, unlike the strategy engine's own use of it (which
+# explicitly converts it to a remaining-laps probability) — too weak and
+# collinear with circuit_id/season for a tree model to extract real signal
+# from, so it just adds a dimension to overfit on.
 BOOLEAN_FEATURES = ["safety_car_active", "is_pit_lap"]
 FEATURE_COLUMNS = NUMERIC_FEATURES + BOOLEAN_FEATURES + CATEGORICAL_COLUMNS
 
@@ -68,6 +80,20 @@ def main() -> None:
         num_leaves=63,
         is_unbalance=True,
         random_state=42,
+        # Defensive reproducibility pin (PRD's own tracking goal — see
+        # models/common/tracking.py): random_state alone doesn't fully
+        # pin LightGBM's multi-threaded histogram construction, since
+        # floating-point summation order can vary with thread scheduling.
+        # NOTE: investigating a real, large prediction swing for an actual
+        # race leader (0.61 vs 0.24 win probability across two retrains)
+        # initially pointed here, but retraining with these two flags set
+        # reproduced the exact same (0.24) result — ruling this out. The
+        # actual cause was a categorical-vocabulary bug, now fixed in
+        # models/common/features.py and strategy_engine/model_features.py.
+        # Left in anyway as a legitimate best practice; every other model
+        # in models/ got the same two flags for the same reason.
+        deterministic=True,
+        force_row_wise=True,
     )
     model.fit(
         train[FEATURE_COLUMNS],

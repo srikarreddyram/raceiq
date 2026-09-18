@@ -40,6 +40,10 @@ NUMERIC_FEATURES = [
     "driver_overtaking_score",
     "condition_delta",
 ]
+# historical_dnf_rate was tried and reverted here too — see
+# win_probability/train.py's comment for the full rationale and numbers.
+# Same negative result: top-3 accuracy 0.435 -> 0.432, MAE 2.84 -> 2.90
+# (both worse) on an otherwise-identical run.
 BOOLEAN_FEATURES = ["safety_car_active", "is_pit_lap"]
 FEATURE_COLUMNS = NUMERIC_FEATURES + BOOLEAN_FEATURES + CATEGORICAL_COLUMNS
 
@@ -67,6 +71,11 @@ def main() -> None:
         learning_rate=0.05,
         num_leaves=63,
         random_state=42,
+        # See models/win_probability/train.py's comment: random_state
+        # alone doesn't make LightGBM's multi-threaded training fully
+        # reproducible — pinned here for the same reason.
+        deterministic=True,
+        force_row_wise=True,
     )
     model.fit(
         train[FEATURE_COLUMNS],

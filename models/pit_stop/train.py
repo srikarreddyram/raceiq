@@ -83,6 +83,11 @@ def main() -> None:
         num_leaves=63,
         is_unbalance=True,
         random_state=42,
+        # See models/win_probability/train.py's comment: random_state
+        # alone doesn't make LightGBM's multi-threaded training fully
+        # reproducible — pinned here for the same reason.
+        deterministic=True,
+        force_row_wise=True,
     )
     model.fit(
         train[FEATURE_COLUMNS],
