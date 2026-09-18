@@ -21,6 +21,29 @@ from the denominator entirely: a driver who never started was never at
 risk of retiring mid-race, which is the specific event this feature
 grounds.
 
+Unlike `historical_sc_rate`, this isn't a plain all-time expanding average
+per circuit: F1's mechanical reliability resets with each major
+regulation cycle rather than drifting gradually — year 1 of an all-new
+chassis/power-unit ruleset (2022's ground-effect regs, 2026's new
+chassis-and-power-unit rules) reliably brings a wave of teething
+mechanical failures that a mature, several-years-in season under the same
+stable rules (2025 was year 4 of the 2022 ruleset) doesn't have. Blending
+pre- and post-regulation-change seasons into one all-time average would
+systematically misjudge both directions at once — overstating risk in a
+mature season, understating it in a fresh one — which is exactly the
+correction this project's own PRD author flagged from real F1 knowledge,
+not something derivable from the data alone. `era` below buckets the
+seasons this project's data spans (2018-) into the three real regulation
+packages actually involved: 2018-2021 (final years of the 2017-spec
+wide-body aero rules), 2022-2025 (the ground-effect ruleset), 2026+ (the
+new chassis/power-unit ruleset). `historical_dnf_rate` prefers the
+circuit's own expanding average *within the current era*, and only falls
+back to a coarser (but still era-matched) estimate when that's too sparse
+to trust — see the SQL's COALESCE chain. A brand-new era's early races
+will legitimately have thin era-specific history by construction; that's
+an honest limit of an empirical approach, not a bug to paper over with a
+guessed number.
+
 Grain: one row per race_id (not per lap) — every lap in a race shares the
 same circuit-history baseline, since the baseline doesn't change within a
 race.
@@ -34,7 +57,9 @@ import duckdb
 
 logger = logging.getLogger(__name__)
 
-_SQL = """
+_REGULATION_ERA_SQL = "CASE WHEN r.season <= 2021 THEN 0 WHEN r.season <= 2025 THEN 1 ELSE 2 END"
+
+_SQL = f"""
 CREATE OR REPLACE TABLE gold.circuit_history AS
 WITH race_conditions AS (
     SELECT
@@ -48,17 +73,6 @@ WITH race_conditions AS (
     JOIN gold.lap_features lf ON lf.race_id = r.race_id
     GROUP BY r.race_id, r.circuit_id, r.date
 ),
-race_attrition AS (
-    SELECT
-        r.race_id,
-        AVG(
-            CASE WHEN res.status = 'Finished' OR res.status = 'Lapped' OR res.status LIKE '+%' THEN 0 ELSE 1 END
-        ) AS race_dnf_rate
-    FROM silver.races r
-    JOIN bronze.ergast_results res ON res.season = r.season AND res.round = r.round
-    WHERE res.status != 'Did not start'
-    GROUP BY r.race_id
-),
 with_baseline AS (
     SELECT
         this.race_id,
@@ -67,24 +81,60 @@ with_baseline AS (
         AVG(prior.race_avg_track_temp) AS circuit_baseline_track_temp,
         AVG(prior.race_avg_air_temp) AS circuit_baseline_air_temp,
         AVG(prior.race_had_safety_car) AS historical_sc_rate,
-        AVG(prior_attrition.race_dnf_rate) AS historical_dnf_rate,
         COUNT(prior.race_id) AS prior_races_at_circuit
     FROM race_conditions this
     LEFT JOIN race_conditions prior
         ON prior.circuit_id = this.circuit_id AND prior.date < this.date
-    LEFT JOIN race_attrition prior_attrition ON prior_attrition.race_id = prior.race_id
     GROUP BY this.race_id, this.circuit_id, this.race_avg_track_temp
+),
+race_attrition AS (
+    SELECT
+        r.race_id,
+        r.circuit_id,
+        r.date,
+        {_REGULATION_ERA_SQL} AS era,
+        AVG(
+            CASE WHEN res.status = 'Finished' OR res.status = 'Lapped' OR res.status LIKE '+%' THEN 0 ELSE 1 END
+        ) AS race_dnf_rate
+    FROM silver.races r
+    JOIN bronze.ergast_results res ON res.season = r.season AND res.round = r.round
+    WHERE res.status != 'Did not start'
+    GROUP BY r.race_id, r.circuit_id, r.date, r.season
+),
+this_race_era AS (
+    SELECT r.race_id, r.circuit_id, r.date, {_REGULATION_ERA_SQL} AS era
+    FROM silver.races r
+),
+-- Three fallback levels, each restricted to THIS race's own regulation
+-- era (never blending across an era boundary): the circuit's own prior
+-- races in this era, then any circuit's prior races in this era, then —
+-- only if this era has no prior races at all for any circuit yet, e.g.
+-- the very first race(s) of a brand-new ruleset — every prior race
+-- regardless of era, as the least-bad information available at that
+-- point. See module docstring on why era-matching takes priority over
+-- circuit-matching here (the opposite priority from historical_sc_rate).
+dnf_rates AS (
+    SELECT
+        this.race_id,
+        AVG(prior.race_dnf_rate) FILTER (WHERE prior.circuit_id = this.circuit_id AND prior.era = this.era)
+            AS circuit_era_dnf_rate,
+        AVG(prior.race_dnf_rate) FILTER (WHERE prior.era = this.era) AS era_wide_dnf_rate,
+        AVG(prior.race_dnf_rate) AS all_time_dnf_rate
+    FROM this_race_era this
+    LEFT JOIN race_attrition prior ON prior.date < this.date
+    GROUP BY this.race_id
 )
 SELECT
-    race_id,
-    circuit_id,
-    prior_races_at_circuit,
-    circuit_baseline_track_temp,
-    circuit_baseline_air_temp,
-    historical_sc_rate,
-    historical_dnf_rate,
-    (race_avg_track_temp - circuit_baseline_track_temp) AS condition_delta
-FROM with_baseline
+    wb.race_id,
+    wb.circuit_id,
+    wb.prior_races_at_circuit,
+    wb.circuit_baseline_track_temp,
+    wb.circuit_baseline_air_temp,
+    wb.historical_sc_rate,
+    COALESCE(dr.circuit_era_dnf_rate, dr.era_wide_dnf_rate, dr.all_time_dnf_rate) AS historical_dnf_rate,
+    (wb.race_avg_track_temp - wb.circuit_baseline_track_temp) AS condition_delta
+FROM with_baseline wb
+JOIN dnf_rates dr ON dr.race_id = wb.race_id
 """
 
 
