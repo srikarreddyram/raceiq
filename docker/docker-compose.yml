@@ -1,0 +1,21 @@
+# Usage (from the repo root):
+#   docker compose -f docker/docker-compose.yml up --build
+#
+# Requires the Bronze/Silver/Gold pipelines and at least the six models
+# already built on the host (uv run python -m pipelines.<layer>.run,
+# uv run python -m models.<name>.train) — this only serves what's already
+# there, matching the same local-warehouse-file assumption
+# tests/conftest.py documents for this project's test suite.
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      # Read-only: this container serves predictions, it never re-runs
+      # ingestion, the Gold pipeline, or model training.
+      - ../data/bronze:/app/data/bronze:ro
+      - ../mlflow.db:/app/mlflow.db:ro
+      - ../mlartifacts:/app/mlartifacts:ro

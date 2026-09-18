@@ -1,0 +1,32 @@
+# Mirrors .gitignore's data/model-artifact exclusions — these are
+# mounted as volumes at runtime (see docker/docker-compose.yml), not
+# baked into the image.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+data/raw/
+data/bronze/
+data/silver/
+data/gold/
+*.duckdb
+*.db
+
+.fastf1_cache/
+mlruns/
+mlartifacts/
+mlflow.db
+catboost_info/
+
+.git/
+.github/
+docs/
+tests/
+*.md
+
+.env
+.env.*
+!.env.example
