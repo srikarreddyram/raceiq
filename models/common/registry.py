@@ -111,6 +111,22 @@ def latest_run_id(experiment_name: str, run_name: str) -> str:
     return _latest_run_id(MlflowClient(), experiment_name, run_name)
 
 
+def promoted_run_metrics(experiment_name: str, run_name: str) -> dict[str, float]:
+    """The metrics MLflow recorded for whatever run is currently promoted
+    to production for (experiment_name, run_name) — used by
+    monitoring/run.py as the baseline a fresh evaluation gets compared
+    against. Empty dict if nothing has ever been promoted for this pair.
+    """
+    mlflow.set_tracking_uri(f"sqlite:///{MLFLOW_DB_PATH}")
+    client = MlflowClient()
+    registered_name = _registered_model_name(experiment_name, run_name)
+    try:
+        version = client.get_model_version_by_alias(registered_name, PRODUCTION_ALIAS)
+    except MlflowException:
+        return {}
+    return dict(client.get_run(version.run_id).data.metrics)
+
+
 def register_and_promote(experiment_name: str, run_name: str, run_id: str) -> None:
     """Create (or reuse) a registered model for this (experiment, run_name)
     pair, register `run_id`'s logged model as a new version of it, and
