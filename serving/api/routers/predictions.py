@@ -83,6 +83,7 @@ def predict_strategy_optimal(request: StrategyRequest) -> StrategyRecommendation
         n_simulations=request.n_simulations,
         n_candidates_evaluated=n_candidates,
         win_probability_model_estimate=recommendation["model_cross_checks"]["win_probability_model_estimate"],
+        expected_finish_model_estimate=recommendation["model_cross_checks"]["expected_finish_model_estimate"],
         recommended_strategy=ScoredStrategy(**recommendation["recommended_strategy"]),
         reasoning=recommendation["reasoning"],
         alternatives=[ScoredStrategy(**alt) for alt in recommendation["alternatives"]],

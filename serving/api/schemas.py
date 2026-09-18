@@ -79,10 +79,12 @@ class StrategyRecommendation(BaseModel):
     laps_remaining: int
     n_simulations: int
     n_candidates_evaluated: int
-    # The Win Probability model's own estimate for the driver's actual
-    # current state, independent of the simulation below — a cross-check,
-    # not a replacement (see strategy_engine/oracles.py's docstring).
+    # The Win Probability and Final Race Position models' own estimates
+    # for the driver's actual current state, independent of the simulation
+    # below — cross-checks, not replacements (see
+    # strategy_engine/oracles.py's docstrings).
     win_probability_model_estimate: float
+    expected_finish_model_estimate: float
     recommended_strategy: ScoredStrategy
     reasoning: list[str]
     alternatives: list[ScoredStrategy]

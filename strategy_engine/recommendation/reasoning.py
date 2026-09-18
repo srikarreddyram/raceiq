@@ -9,18 +9,28 @@ rather than a generic placeholder sentence.
 
 from __future__ import annotations
 
-from strategy_engine.oracles import predict_remaining_tyre_life, predict_win_probability_now
+from strategy_engine.oracles import (
+    predict_expected_finish_now,
+    predict_remaining_tyre_life,
+    predict_win_probability_now,
+)
 from strategy_engine.scoring.score import StrategyScore
 from strategy_engine.state import RaceState
 
-# A large gap between the classifier's static estimate and the simulation's
-# own win probability for the recommended strategy is worth flagging rather
-# than silently ignoring — see predict_win_probability_now's docstring.
+# Large gaps between a classifier's static estimate and the simulation's
+# own output for the recommended strategy are worth flagging rather than
+# silently ignoring — see predict_win_probability_now/predict_expected_finish_now's
+# docstrings. Position threshold is in finishing places, not a fraction.
 _WIN_PROBABILITY_DISAGREEMENT_THRESHOLD = 0.15
+_EXPECTED_FINISH_DISAGREEMENT_THRESHOLD = 3.0
 
 
 def build_reasoning(
-    state: RaceState, top: StrategyScore, alternative: StrategyScore | None, static_win_probability: float
+    state: RaceState,
+    top: StrategyScore,
+    alternative: StrategyScore | None,
+    static_win_probability: float,
+    static_expected_finish: float,
 ) -> list[str]:
     bullets: list[str] = []
 
@@ -53,12 +63,20 @@ def build_reasoning(
         f"({top.safety_car_encounter_rate * 100:.0f}% of runs encountered a safety car)."
     )
 
-    disagreement = abs(static_win_probability - top.win_probability)
-    if disagreement >= _WIN_PROBABILITY_DISAGREEMENT_THRESHOLD:
+    win_disagreement = abs(static_win_probability - top.win_probability)
+    if win_disagreement >= _WIN_PROBABILITY_DISAGREEMENT_THRESHOLD:
         bullets.append(
             f"Note: the Win Probability model's independent estimate for this driver's current position "
             f"is {static_win_probability * 100:.0f}%, notably different from the simulation's "
             f"{top.win_probability * 100:.0f}% for the recommended strategy — worth a sanity check before acting."
+        )
+
+    finish_disagreement = abs(static_expected_finish - top.expected_finish)
+    if finish_disagreement >= _EXPECTED_FINISH_DISAGREEMENT_THRESHOLD:
+        bullets.append(
+            f"Note: the Final Race Position model's independent estimate for this driver's current position "
+            f"is P{static_expected_finish:.1f}, notably different from the simulation's P{top.expected_finish:.1f} "
+            f"for the recommended strategy — worth a sanity check before acting."
         )
 
     if alternative is not None:
@@ -76,6 +94,7 @@ def build_recommendation(
     top = ranked[0]
     alternatives = ranked[1:4]
     static_win_probability = predict_win_probability_now(state)
+    static_expected_finish = predict_expected_finish_now(state)
 
     return {
         "circuit_id": state.circuit_id,
@@ -89,10 +108,11 @@ def build_recommendation(
             "condition_delta": state.condition_delta,
         },
         "model_cross_checks": {
-            # The Win Probability classifier's own estimate for the driver's
-            # actual current state, independent of the simulation below — see
-            # oracles.predict_win_probability_now's docstring.
+            # The Win Probability and Final Race Position classifiers' own
+            # estimates for the driver's actual current state, independent
+            # of the simulation below — see oracles.py's docstrings.
             "win_probability_model_estimate": static_win_probability,
+            "expected_finish_model_estimate": static_expected_finish,
         },
         "recommended_strategy": {
             "action": top.label,
@@ -105,7 +125,9 @@ def build_recommendation(
             "strategy_score": top.strategy_score,
             "finish_distribution": top.finish_distribution,
         },
-        "reasoning": build_reasoning(state, top, alternatives[0] if alternatives else None, static_win_probability),
+        "reasoning": build_reasoning(
+            state, top, alternatives[0] if alternatives else None, static_win_probability, static_expected_finish
+        ),
         "alternatives": [
             {
                 "action": alt.label,

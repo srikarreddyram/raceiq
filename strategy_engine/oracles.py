@@ -1,7 +1,11 @@
-"""Wraps the three trained models the Monte Carlo simulation calls every
-simulated lap: Lap Time (the "time oracle", PRD 12.4 step 2), Tyre
-Degradation (the stint-feasibility constraint), and Safety Car Probability
-(the stochastic event sampler, PRD 12.4 step 1).
+"""Wraps every trained model the strategy engine calls on a `RaceState`:
+the three the Monte Carlo simulation calls every simulated lap — Lap Time
+(the "time oracle", PRD 12.4 step 2), Tyre Degradation (the stint-
+feasibility constraint), and Safety Car Probability (the stochastic event
+sampler, PRD 12.4 step 1) — plus Win Probability and Final Race Position,
+called once per recommendation (not per simulated lap) purely as
+independent cross-checks against the simulation's own output. See each
+`predict_*_now` function's docstring for why that comparison is useful.
 
 Each function builds a single-row DataFrame shaped exactly like that
 model's training features from a `RaceState`, using `model_features.py`
@@ -21,6 +25,7 @@ import pandas as pd
 
 from models.common.registry import load_latest_model
 from models.lap_time.train import FEATURE_COLUMNS as LAP_TIME_FEATURES
+from models.race_position.train import FEATURE_COLUMNS as RACE_POSITION_FEATURES
 from models.safety_car.train import FEATURE_COLUMNS as SAFETY_CAR_FEATURES
 from models.tyre_degradation.train import FEATURE_COLUMNS as TYRE_FEATURES
 from models.win_probability.train import FEATURE_COLUMNS as WIN_PROBABILITY_FEATURES
@@ -155,3 +160,39 @@ def predict_win_probability_now(state: RaceState) -> float:
     }
     row = _row_from(state, values, WIN_PROBABILITY_FEATURES)
     return float(model.predict_proba(row)[0, 1])
+
+
+def predict_expected_finish_now(state: RaceState) -> float:
+    """The trained Final Race Position classifier's estimate for the
+    driver's *actual current* race state — same cross-check role as
+    `predict_win_probability_now`, on a different metric. Final Race
+    Position is multiclass (one probability per finishing position), so
+    "expected finish" here is the probability-weighted mean position
+    (sum_p position * P(position)) rather than the single most-likely
+    class — consistent with how the Monte Carlo simulation's own
+    `expected_finish` is computed (an average across simulated outcomes,
+    not a mode), so the two numbers are actually comparable.
+    """
+    model = load_latest_model("final_race_position")
+    values = {
+        "current_position": state.current_position,
+        "gap_to_leader": state.gap_to_leader,
+        "laps_remaining": state.laps_remaining,
+        "tyre_age": state.tyre_age,
+        "degradation_rate": state.degradation_rate,
+        "driver_avg_pace_delta": state.driver_avg_pace_delta,
+        "driver_overtaking_score": state.driver_overtaking_score,
+        "condition_delta": state.condition_delta,
+        "safety_car_active": 0,
+        "is_pit_lap": 0,
+        "driver_id": state.driver_id,
+        "team_id": state.team_id,
+        "circuit_id": state.circuit_id,
+        "compound": state.compound,
+        "rival_driver_id": state.rival_ahead.driver_id if state.rival_ahead else None,
+        "rival_team_id": state.rival_ahead.team_id if state.rival_ahead else None,
+        "rival_compound": state.rival_ahead.compound if state.rival_ahead else None,
+    }
+    row = _row_from(state, values, RACE_POSITION_FEATURES)
+    proba = model.predict_proba(row)[0]
+    return float(np.dot(model.classes_, proba))

@@ -69,17 +69,34 @@ have the model report its own uncertainty (e.g. quantile regression) so a
 rare, low-confidence scenario widens this simulation's noise instead of
 narrowing it to a point estimate.
 
-Two more simplifications, documented where they matter:
+Three more simplifications, documented where they matter:
 - Rivals' future pace projects their *current* trend forward over a
   bounded horizon (see field.py and RIVAL_TREND_HORIZON_LAPS below)
-  rather than simulating their own strategic decisions — in particular,
-  rivals are never modeled as pitting, so any strategy that does pit
-  carries a real, bounded, and explicable handicap in this comparison
-  roughly equal to one pit stop's time loss.
+  rather than simulating their own strategic decisions. Rivals are now
+  charged one pit stop's time if their current tyre age would exceed a
+  realistic stint length before the race ends (see
+  tyre_baselines.typical_max_stint_length) — found necessary via the Win
+  Probability model cross-check (recommendation/reasoning.py) on a real
+  scenario where every rival, including the leader, was already on their
+  second stint; without it, any strategy for OUR driver that pits was
+  penalized against a field modeled as never stopping again.
 - "Pitting under a safety car is free track position" (PRD Section 12.6's
   own example reasoning) is modeled as a discount on this driver's own
   pit loss when it lands on a simulated SC lap — rivals bunching up under
   that same SC isn't modeled, so this understates the real effect.
+- No attrition/DNF modeling: rivals are never modeled as retiring, so a
+  driver who's already last stays modeled as last for the whole race with
+  zero chance of inheriting a position from someone else's mechanical
+  failure or crash. Found via the Final Race Position model cross-check
+  (oracles.predict_expected_finish_now): for a real last-placed driver
+  (Bahrain 2025, lap 20, bortoleto — genuinely P20), the classifier's
+  historically-grounded estimate was P12.5 while the simulation's best
+  strategy still showed P20.0. `bronze.ergast_results` already carries a
+  `status` column (Finished/Retired/Accident/...) that could ground a
+  per-circuit historical retirement rate the same way `historical_sc_rate`
+  already grounds safety car probability — not built yet; it needs a new
+  Silver/Gold column, not just a strategy_engine change, so it's recorded
+  here rather than patched around.
 """
 
 from __future__ import annotations
