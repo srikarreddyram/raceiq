@@ -23,6 +23,7 @@ from models.common.registry import load_latest_model
 from models.lap_time.train import FEATURE_COLUMNS as LAP_TIME_FEATURES
 from models.safety_car.train import FEATURE_COLUMNS as SAFETY_CAR_FEATURES
 from models.tyre_degradation.train import FEATURE_COLUMNS as TYRE_FEATURES
+from models.win_probability.train import FEATURE_COLUMNS as WIN_PROBABILITY_FEATURES
 from strategy_engine.model_features import apply_reference_categoricals
 from strategy_engine.state import RaceState
 
@@ -118,4 +119,39 @@ def predict_safety_car_probability(state: RaceState) -> float:
         "circuit_id": state.circuit_id,
     }
     row = _row_from(state, values, SAFETY_CAR_FEATURES)
+    return float(model.predict_proba(row)[0, 1])
+
+
+def predict_win_probability_now(state: RaceState) -> float:
+    """The trained Win Probability classifier's estimate for the driver's
+    *actual current* race state — independent of any candidate strategy or
+    simulation. Used purely as a cross-check alongside the Monte Carlo
+    simulation's own win-probability output (see recommendation/reasoning.py):
+    the classifier was trained on real historical (position, gap, tyre age,
+    ...) snapshots and their eventual outcomes, so a large disagreement
+    between "what history says a driver in this exact spot usually does" and
+    "what the simulation predicts for the recommended strategy" is a useful
+    signal, not something to silently reconcile.
+    """
+    model = load_latest_model("win_probability")
+    values = {
+        "current_position": state.current_position,
+        "gap_to_leader": state.gap_to_leader,
+        "laps_remaining": state.laps_remaining,
+        "tyre_age": state.tyre_age,
+        "degradation_rate": state.degradation_rate,
+        "driver_avg_pace_delta": state.driver_avg_pace_delta,
+        "driver_overtaking_score": state.driver_overtaking_score,
+        "condition_delta": state.condition_delta,
+        "safety_car_active": 0,
+        "is_pit_lap": 0,
+        "driver_id": state.driver_id,
+        "team_id": state.team_id,
+        "circuit_id": state.circuit_id,
+        "compound": state.compound,
+        "rival_driver_id": state.rival_ahead.driver_id if state.rival_ahead else None,
+        "rival_team_id": state.rival_ahead.team_id if state.rival_ahead else None,
+        "rival_compound": state.rival_ahead.compound if state.rival_ahead else None,
+    }
+    row = _row_from(state, values, WIN_PROBABILITY_FEATURES)
     return float(model.predict_proba(row)[0, 1])

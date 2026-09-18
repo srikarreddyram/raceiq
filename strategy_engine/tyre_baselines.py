@@ -53,6 +53,49 @@ def _compound_rates() -> dict[str, float]:
     return {row.compound: row.avg_rate for row in rows.itertuples()}
 
 
+@lru_cache(maxsize=None)
+def _circuit_compound_max_stint() -> dict[tuple[str, str], float]:
+    con = get_connection()
+    try:
+        rows = con.execute(
+            """
+            SELECT r.circuit_id, lf.compound,
+                   PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY stint_max_age) AS typical_max_age
+            FROM (
+                SELECT race_id, driver_id, stint_number, compound, MAX(tyre_age) AS stint_max_age
+                FROM gold.lap_features
+                GROUP BY race_id, driver_id, stint_number, compound
+            ) lf
+            JOIN silver.races r ON r.race_id = lf.race_id
+            GROUP BY r.circuit_id, lf.compound
+            """
+        ).df()
+    finally:
+        con.close()
+    return {(row.circuit_id, row.compound): row.typical_max_age for row in rows.itertuples()}
+
+
+_DEFAULT_MAX_STINT_LAPS = 25.0  # a mild, conservative fallback
+
+
+def typical_max_stint_length(circuit_id: str, compound: str) -> float:
+    """The 75th percentile of observed stint length (by final tyre age) for
+    this (circuit, compound) — a generous "how long can this compound
+    realistically run here before a team pits" estimate, used by the
+    Monte Carlo simulation to decide whether a *rival* (whose own future
+    strategy isn't otherwise modeled — see field.py) is carrying tyres old
+    enough that they'd need another stop before the race ends. The 75th
+    percentile (not the median) is deliberate: it's better to under-charge
+    a rival who's genuinely nursing a long stint than to over-charge one
+    who isn't, since the whole point is correcting a bias that previously
+    always favored rivals.
+    """
+    rates = _circuit_compound_max_stint()
+    if (circuit_id, compound) in rates:
+        return float(rates[(circuit_id, compound)])
+    return _DEFAULT_MAX_STINT_LAPS
+
+
 def typical_degradation_rate(circuit_id: str, compound: str) -> float:
     circuit_rates = _circuit_compound_rates()
     if (circuit_id, compound) in circuit_rates:

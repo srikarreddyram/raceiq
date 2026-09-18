@@ -98,7 +98,7 @@ from strategy_engine.model_features import apply_reference_categoricals
 from strategy_engine.pit_loss import typical_pit_loss_seconds
 from strategy_engine.search.candidates import Strategy
 from strategy_engine.state import RaceState
-from strategy_engine.tyre_baselines import typical_degradation_rate
+from strategy_engine.tyre_baselines import typical_degradation_rate, typical_max_stint_length
 
 LAP_TIME_NOISE_SECONDS = 1.2  # grounded in the Lap Time model's own measured stable-regime RMSE (~1.07s)
 RIVAL_PACE_NOISE_PER_LAP = 0.5
@@ -289,10 +289,29 @@ def simulate_strategy(
     effective_laps = min(shared.n_laps, RIVAL_TREND_HORIZON_LAPS)
 
     rng = np.random.default_rng()  # rival noise doesn't need to be paired across strategies
+
+    def _rival_owed_pit_loss(rival: RivalTrend) -> float:
+        # A rival's own future strategy isn't simulated (see field.py), which
+        # previously meant every rival was implicitly modeled as "never pits
+        # again" for the rest of the race — a real bias found via the Win
+        # Probability model cross-check (recommendation/reasoning.py): a
+        # race leader whose recommended strategy involves a stop was
+        # charged the full pit-loss cost while rivals on comparably worn
+        # tyres were charged nothing for the stop they'd also need. If this
+        # rival's current tyre age would exceed a realistic stint length
+        # for their compound at this circuit before the race ends, charge
+        # them one pit stop's worth of time too — undiscounted for a
+        # simulated safety car, since we have no way of knowing when in
+        # their own (unmodeled) strategy that stop would land relative to
+        # this simulation's SC draws.
+        laps_until_needed = typical_max_stint_length(state.circuit_id, rival.compound) - rival.tyre_age
+        return pit_loss if laps_until_needed < shared.n_laps else 0.0
+
     rival_final_gaps = np.stack(
         [
             rival.gap_to_leader
             + effective_laps * rival.recent_pace_delta
+            + _rival_owed_pit_loss(rival)
             + rng.normal(0, RIVAL_PACE_NOISE_PER_LAP * np.sqrt(shared.n_laps), size=n_simulations)
             for rival in rivals
         ],

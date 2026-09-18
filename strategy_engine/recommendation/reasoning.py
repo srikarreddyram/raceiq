@@ -9,12 +9,19 @@ rather than a generic placeholder sentence.
 
 from __future__ import annotations
 
-from strategy_engine.oracles import predict_remaining_tyre_life
+from strategy_engine.oracles import predict_remaining_tyre_life, predict_win_probability_now
 from strategy_engine.scoring.score import StrategyScore
 from strategy_engine.state import RaceState
 
+# A large gap between the classifier's static estimate and the simulation's
+# own win probability for the recommended strategy is worth flagging rather
+# than silently ignoring — see predict_win_probability_now's docstring.
+_WIN_PROBABILITY_DISAGREEMENT_THRESHOLD = 0.15
 
-def build_reasoning(state: RaceState, top: StrategyScore, alternative: StrategyScore | None) -> list[str]:
+
+def build_reasoning(
+    state: RaceState, top: StrategyScore, alternative: StrategyScore | None, static_win_probability: float
+) -> list[str]:
     bullets: list[str] = []
 
     remaining_life = predict_remaining_tyre_life(state)
@@ -46,6 +53,14 @@ def build_reasoning(state: RaceState, top: StrategyScore, alternative: StrategyS
         f"({top.safety_car_encounter_rate * 100:.0f}% of runs encountered a safety car)."
     )
 
+    disagreement = abs(static_win_probability - top.win_probability)
+    if disagreement >= _WIN_PROBABILITY_DISAGREEMENT_THRESHOLD:
+        bullets.append(
+            f"Note: the Win Probability model's independent estimate for this driver's current position "
+            f"is {static_win_probability * 100:.0f}%, notably different from the simulation's "
+            f"{top.win_probability * 100:.0f}% for the recommended strategy — worth a sanity check before acting."
+        )
+
     if alternative is not None:
         bullets.append(
             f"Alternative — {alternative.label}: lower risk (variance {alternative.risk_score:.1f} vs "
@@ -60,6 +75,7 @@ def build_recommendation(
 ) -> dict:
     top = ranked[0]
     alternatives = ranked[1:4]
+    static_win_probability = predict_win_probability_now(state)
 
     return {
         "circuit_id": state.circuit_id,
@@ -72,6 +88,12 @@ def build_recommendation(
             "historical_sc_rate": state.historical_sc_rate,
             "condition_delta": state.condition_delta,
         },
+        "model_cross_checks": {
+            # The Win Probability classifier's own estimate for the driver's
+            # actual current state, independent of the simulation below — see
+            # oracles.predict_win_probability_now's docstring.
+            "win_probability_model_estimate": static_win_probability,
+        },
         "recommended_strategy": {
             "action": top.label,
             "win_probability": top.win_probability,
@@ -83,7 +105,7 @@ def build_recommendation(
             "strategy_score": top.strategy_score,
             "finish_distribution": top.finish_distribution,
         },
-        "reasoning": build_reasoning(state, top, alternatives[0] if alternatives else None),
+        "reasoning": build_reasoning(state, top, alternatives[0] if alternatives else None, static_win_probability),
         "alternatives": [
             {
                 "action": alt.label,

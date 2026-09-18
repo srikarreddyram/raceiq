@@ -30,6 +30,8 @@ class RivalTrend:
     team_id: str
     gap_to_leader: float
     recent_pace_delta: float  # their pace_delta_this_lap at the snapshot — negative is faster than the field
+    compound: str
+    tyre_age: float  # at the snapshot lap — used to decide whether this rival still owes a future pit stop
 
 
 _TREND_WINDOW_LAPS = 5
@@ -56,7 +58,9 @@ def build_field_snapshot_from_gold(race_id: str, lap_number: int, exclude_driver
                 driver_id,
                 team_id,
                 LAST(gap_to_leader ORDER BY lap_number) AS gap_to_leader,
-                AVG(pace_delta_this_lap) AS recent_pace_delta
+                AVG(pace_delta_this_lap) AS recent_pace_delta,
+                LAST(compound ORDER BY lap_number) AS compound,
+                LAST(tyre_age ORDER BY lap_number) AS tyre_age
             FROM gold.race_features
             WHERE race_id = ? AND driver_id != ?
                 AND lap_number BETWEEN ? AND ? AND NOT is_pit_lap
@@ -73,6 +77,8 @@ def build_field_snapshot_from_gold(race_id: str, lap_number: int, exclude_driver
             team_id=r.team_id,
             gap_to_leader=r.gap_to_leader,
             recent_pace_delta=r.recent_pace_delta if pd.notna(r.recent_pace_delta) else 0.0,
+            compound=r.compound,
+            tyre_age=float(r.tyre_age),
         )
         for r in rows.itertuples()
     ]
