@@ -18,11 +18,11 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-import mlflow
 import numpy as np
 import torch
 
 from models.common.data import load_race_features
+from models.common.registry import load_latest_pytorch_model
 from models.lap_time_sequence.data import (
     CATEGORICAL_FEATURES,
     SEQUENCE_BOOLEAN_FEATURES,
@@ -48,26 +48,9 @@ def _vocabs() -> dict[str, Vocab]:
 
 @lru_cache(maxsize=None)
 def _model():
-    mlflow.set_tracking_uri(f"sqlite:///{_mlflow_db_path()}")
-    from mlflow.tracking import MlflowClient
-
-    client = MlflowClient()
-    experiment = client.get_experiment_by_name(EXPERIMENT_NAME)
-    runs = client.search_runs(
-        experiment_ids=[experiment.experiment_id],
-        filter_string=f"tags.mlflow.runName = '{RUN_NAME}'",
-        order_by=["start_time DESC"],
-        max_results=1,
-    )
-    model = mlflow.pytorch.load_model(f"runs:/{runs[0].info.run_id}/model")
+    model = load_latest_pytorch_model(EXPERIMENT_NAME, RUN_NAME)
     model.eval()
     return model
-
-
-def _mlflow_db_path():
-    from models.common.tracking import MLFLOW_DB_PATH
-
-    return MLFLOW_DB_PATH
 
 
 def predict_trajectory(state: RaceState, plan: list[dict]) -> tuple[np.ndarray, np.ndarray]:

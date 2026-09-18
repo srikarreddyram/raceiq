@@ -26,7 +26,7 @@ import torch
 from torch.utils.data import Dataset
 
 from models.common.data import load_race_features
-from models.common.splits import temporal_split
+from models.common.splits import EXCLUDED_SEASONS, temporal_split
 
 SEQUENCE_NUMERIC_FEATURES = [
     "tyre_age",
@@ -168,7 +168,18 @@ def collate(batch: list[dict]) -> dict:
 
 
 def build_vocabs(df: pd.DataFrame) -> dict[str, Vocab]:
-    return {col: Vocab.build(df[col]) for col in CATEGORICAL_FEATURES}
+    # Restricted to eligible (non-EXCLUDED_SEASONS) rows for the same
+    # reason models/common/features.py's apply_categorical_dtypes is:
+    # Vocab.build assigns sequential integer indices via sorted(unique()),
+    # and the current in-progress season keeps gaining backfilled races
+    # that can introduce a brand-new category (a new driver/team) anywhere
+    # in that sorted order — shifting every alphabetically-later category's
+    # index and silently misaligning the embedding table's rows for
+    # everyone else, exactly the bug found and fixed there. Both callers
+    # of this function (load_datasets for training, lstm_oracle.py's
+    # _vocabs for inference) share this one fix automatically.
+    eligible = df[~df["season"].isin(EXCLUDED_SEASONS)] if "season" in df.columns else df
+    return {col: Vocab.build(eligible[col]) for col in CATEGORICAL_FEATURES}
 
 
 def load_datasets() -> tuple[LapSequenceDataset, LapSequenceDataset, LapSequenceDataset, dict[str, Vocab]]:
