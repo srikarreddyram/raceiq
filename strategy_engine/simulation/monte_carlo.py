@@ -69,10 +69,17 @@ have the model report its own uncertainty (e.g. quantile regression) so a
 rare, low-confidence scenario widens this simulation's noise instead of
 narrowing it to a point estimate.
 
+**Round 6** is documented inline in `simulate_strategy`: this driver's
+pace deviation was projected across the whole remaining race while rivals'
+trends were capped at a ten-lap horizon, so whoever was fastest relative
+to the field banked an advantage nobody could answer. Retraining the LSTM
+made it *more* accurate and thereby made this *worse* — an honest -1.1s/lap
+estimate for a race leader turned into a 42-second cushion and a 96% win
+probability. Both sides now use the same horizon.
+
 Three more simplifications, documented where they matter:
-- Rivals' future pace projects their *current* trend forward over a
-  bounded horizon (see field.py and RIVAL_TREND_HORIZON_LAPS below)
-  rather than simulating their own strategic decisions. Rivals are now
+- Rivals' future pace projects their *current* trend forward (see
+  field.py) rather than simulating their own strategic decisions. Rivals are now
   charged one pit stop's time if their current tyre age would exceed a
   realistic stint length before the race ends (see
   tyre_baselines.typical_max_stint_length) — found necessary via the Win
@@ -122,7 +129,13 @@ from strategy_engine.tyre_baselines import typical_degradation_rate, typical_max
 
 LAP_TIME_NOISE_SECONDS = 1.2  # grounded in the Lap Time model's own measured stable-regime RMSE (~1.07s)
 RIVAL_PACE_NOISE_PER_LAP = 0.5
-RIVAL_TREND_HORIZON_LAPS = 10  # how far a rival's short-term (5-lap) pace trend is projected before reverting to neutral
+# Retired in round 6 (see simulate_strategy): rivals' pace trends used to
+# be projected across only this many laps while this driver's ran the full
+# remaining race, and that asymmetry was the bug. Kept as a named record of
+# the assumption rather than silently deleted, since "mean-revert pace to
+# the field average after N laps" is a reasonable idea that simply has to
+# be applied to both sides at once if it's applied at all.
+RETIRED_RIVAL_TREND_HORIZON_LAPS = 10
 SC_PIT_DISCOUNT = 0.3  # fraction of pit loss still paid if the stop lands under a simulated safety car
 MAX_TYRE_AGE_FOR_SIMULATION = 35  # near the 99th percentile observed stint length across compounds in training data
 PACE_DEVIATION_CAP_PER_LAP = 2.0  # seconds/lap; see simulate_strategy's use for why this exists
@@ -317,19 +330,40 @@ def simulate_strategy(
     # ~0.5-1s/lap differences seen between reasonable candidate strategies
     # in normal (dry, in-distribution) scenarios.
     pace_deviation_per_lap = float(np.clip(pace_deviation_per_lap, -PACE_DEVIATION_CAP_PER_LAP, PACE_DEVIATION_CAP_PER_LAP))
+
+    # **Round 6 — the horizons on the two sides of the comparison have to
+    # match.** They didn't: this driver's pace deviation was projected
+    # across every remaining lap, while each rival's was capped at
+    # RIVAL_TREND_HORIZON_LAPS. Finishing position depends only on the
+    # *relative* gap, so an asymmetric horizon hands whichever car is
+    # fastest relative to the field an advantage no rival is ever allowed
+    # to answer.
+    #
+    # It stayed hidden while the LSTM under-predicted pace deltas, and
+    # surfaced when retraining made it MORE accurate: at Bahrain 2025 lap
+    # 20 the model put the leader at -1.145s/lap versus the field (his
+    # actual lap that moment was -1.007, so the estimate was sound), which
+    # over 37 laps compounded into a 42-second gain — larger than the
+    # entire P1-to-P20 spread of ~39s. Every candidate therefore "won"
+    # ~96% of the time against a Win Probability classifier saying 24%.
+    # The cross-checks in recommendation/reasoning.py are what caught it.
+    #
+    # Both sides now project across the full remaining race. The
+    # alternative — capping both at RIVAL_TREND_HORIZON_LAPS — is equally
+    # symmetric but measurably worse: it truncates the pace signal at 10
+    # laps while noise keeps accumulating over all 37 (variance grows with
+    # every lap run, so that part can't be capped), which buried the same
+    # leader at 6.8% win and an expected P6.5. Checked against the two
+    # independently-trained classifiers on three real drivers spanning the
+    # front, midfield and back of the grid, full-race projection agreed
+    # far better (mean win-probability disagreement 3.1pp vs 6.5pp), and
+    # it's the more defensible assumption physically: a genuinely faster
+    # car stays faster, where mean-reverting pace to the field average
+    # after ten laps claims the field converges mid-race, which it doesn't.
     pace_deviation = pace_deviation_per_lap * shared.n_laps
 
     cumulative_deviation = pace_deviation + (shared.noise + pit_time_loss).sum(axis=1)
     our_final_gap = state.gap_to_leader + cumulative_deviation
-
-    # A rival's recent pace trend is measured over a short (5-lap) window and
-    # is itself noisy — extrapolating it linearly across the *entire*
-    # remaining race compounds that noise into an unrealistic sustained
-    # advantage or deficit. Projecting it only across a bounded horizon and
-    # assuming field-average pace beyond that is a mean-reversion
-    # assumption: a short-term pace difference (fuel phase, tyre phase)
-    # doesn't linearly persist for 30+ laps.
-    effective_laps = min(shared.n_laps, RIVAL_TREND_HORIZON_LAPS)
 
     rng = np.random.default_rng()  # rival noise doesn't need to be paired across strategies
 
@@ -353,7 +387,9 @@ def simulate_strategy(
     rival_final_gaps = np.stack(
         [
             rival.gap_to_leader
-            + effective_laps * rival.recent_pace_delta
+            # Same horizon as this driver's own pace_deviation above — see
+            # round 6 there for why the two must match.
+            + shared.n_laps * rival.recent_pace_delta
             + _rival_owed_pit_loss(rival)
             + rng.normal(0, RIVAL_PACE_NOISE_PER_LAP * np.sqrt(shared.n_laps), size=n_simulations)
             for rival in rivals
