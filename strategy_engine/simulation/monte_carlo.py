@@ -141,6 +141,25 @@ MAX_TYRE_AGE_FOR_SIMULATION = 35  # near the 99th percentile observed stint leng
 PACE_DEVIATION_CAP_PER_LAP = 2.0  # seconds/lap; see simulate_strategy's use for why this exists
 DEFAULT_DNF_RATE = 0.15  # this project's own dataset-wide average, for circuits with no prior-race history yet
 
+# How wrong a pace estimate typically is, in seconds per lap — the piece
+# this simulation was missing entirely, and the reason PACE_DEVIATION_CAP_PER_LAP
+# had to exist as a band-aid.
+#
+# Both figures are measured on this project's own data, not assumed:
+#   IN_RACE   std of (a driver's actual pace over the remaining laps) minus
+#             (their observed pace over the first 20), across 3,379
+#             driver-races. Essentially unbiased (mean -0.010).
+#   PRE_RACE  std of (their actual race pace) minus (their season-to-date
+#             average before that race), across 3,060 driver-races. Also
+#             unbiased (mean +0.008).
+#
+# Observing twenty laps barely narrows it, which is itself the finding:
+# race pace genuinely moves around with fuel, tyres, traffic and track
+# evolution. Treating the estimate as exact is what let a 0.5s/lap edge
+# compound into a guaranteed win over a full race distance.
+PACE_ESTIMATE_UNCERTAINTY_IN_RACE = 0.634
+PACE_ESTIMATE_UNCERTAINTY_PRE_RACE = 0.737
+
 
 @dataclass
 class SimulationResult:
@@ -162,6 +181,7 @@ class SharedContext:
     sc_occurs: np.ndarray  # shape (n_simulations, n_laps)
     noise: np.ndarray  # shape (n_simulations, n_laps)
     rival_retires: np.ndarray  # shape (n_simulations, n_rivals), bool — see build_shared_context
+    pace_error: np.ndarray  # shape (n_simulations,), seconds per lap — see build_shared_context
 
 
 def _safety_car_row(state: RaceState, lap_number: int) -> pd.DataFrame:
@@ -242,7 +262,11 @@ def _deterministic_tyre_plan(state: RaceState, strategy: Strategy) -> list[dict]
 
 
 def build_shared_context(
-    state: RaceState, rivals: list[RivalTrend], n_simulations: int, rng: np.random.Generator
+    state: RaceState,
+    rivals: list[RivalTrend],
+    n_simulations: int,
+    rng: np.random.Generator,
+    pace_uncertainty: float = PACE_ESTIMATE_UNCERTAINTY_IN_RACE,
 ) -> SharedContext:
     """Computed once per race state, reused for every candidate strategy —
     the safety-car draws, lap-time noise, and rival-retirement draws,
@@ -285,7 +309,27 @@ def build_shared_context(
     p_dnf_remaining = 1 - (1 - p_dnf_full_race) ** (n_laps / state.race_total_laps)
     rival_retires = rng.random((n_simulations, len(rivals))) < p_dnf_remaining
 
-    return SharedContext(n_laps=n_laps, sc_occurs=sc_occurs, noise=noise, rival_retires=rival_retires)
+    # One pace-estimate error per simulation, drawn here rather than inside
+    # simulate_strategy so every candidate strategy is judged under the SAME
+    # draw — the same common-random-numbers discipline the safety car and
+    # retirement draws already follow. Without that, two candidates would be
+    # compared partly on which got the luckier view of the car's pace.
+    #
+    # It multiplies the whole remaining distance, so it dominates: at the
+    # pre-race figure over 57 laps it contributes ~42s of spread against
+    # ~9s from lap-to-lap noise. That is the correct order of magnitude —
+    # before a race you genuinely do not know a car's pace to better than
+    # a few tenths a lap, and the simulation now says so instead of
+    # reporting 100% win probabilities.
+    pace_error = rng.normal(0.0, pace_uncertainty, size=n_simulations)
+
+    return SharedContext(
+        n_laps=n_laps,
+        sc_occurs=sc_occurs,
+        noise=noise,
+        rival_retires=rival_retires,
+        pace_error=pace_error,
+    )
 
 
 def simulate_strategy(
@@ -293,7 +337,16 @@ def simulate_strategy(
     strategy: Strategy,
     rivals: list[RivalTrend],
     shared: SharedContext,
+    pace_deviation_override: float | None = None,
 ) -> SimulationResult:
+    """`pace_deviation_override` replaces this driver's per-lap pace edge
+    instead of deriving it from the LSTM. race_plan/ uses it so that both
+    sides of the comparison are estimated the same way: rivals there are
+    projected from season form, and scoring our driver from the LSTM while
+    scoring rivals from season form is exactly the two-estimator asymmetry
+    that round 6 (above) was about. Left None in-race, where the LSTM and
+    the rivals' live pace trends are both measured off the same session.
+    """
     n_simulations = shared.sc_occurs.shape[0]
     is_pit_lap = _deterministic_pit_plan(state, strategy)
     pit_loss = typical_pit_loss_seconds(state.circuit_id)
@@ -317,9 +370,12 @@ def simulate_strategy(
             discount = np.where(shared.sc_occurs[:, i], SC_PIT_DISCOUNT, 1.0)
             pit_time_loss[:, i] = pit_loss * discount
 
-    tyre_plan = _deterministic_tyre_plan(state, strategy)
-    green_times, _sc_times = predict_trajectory(state, tyre_plan)
-    pace_deviation_per_lap = float(green_times.mean() - state.field_avg_lap_time_seconds)
+    if pace_deviation_override is not None:
+        pace_deviation_per_lap = float(pace_deviation_override)
+    else:
+        tyre_plan = _deterministic_tyre_plan(state, strategy)
+        green_times, _sc_times = predict_trajectory(state, tyre_plan)
+        pace_deviation_per_lap = float(green_times.mean() - state.field_avg_lap_time_seconds)
     # A wet-race snapshot (long INTERMEDIATE stint, track drying) surfaced a
     # prediction implying ~1.7s/lap of sustained improvement — physically
     # not impossible on a drying track, but a large enough claim, for a
@@ -329,6 +385,18 @@ def simulate_strategy(
     # 100%. Clipped to a generous per-lap bound that's still well above the
     # ~0.5-1s/lap differences seen between reasonable candidate strategies
     # in normal (dry, in-distribution) scenarios.
+    # A NaN here is not survivable and must never reach the ranking below.
+    # `field_avg_lap_time_seconds` is genuinely NaN on lap 1 of a race —
+    # FastF1 records no lap time for the standing-start lap, so the whole
+    # field average for that lap is undefined — and any arithmetic on it
+    # stays NaN all the way to `our_final_gap`. Every NaN comparison
+    # evaluates False, so `(rival_gaps < our_gap).sum()` counts zero rivals
+    # ahead and the driver is scored P1 in *every* simulation: a 100% win
+    # probability generated purely by missing data. Treat an unknown pace
+    # edge as no edge, which is the neutral assumption, not the flattering
+    # one.
+    if not np.isfinite(pace_deviation_per_lap):
+        pace_deviation_per_lap = 0.0
     pace_deviation_per_lap = float(np.clip(pace_deviation_per_lap, -PACE_DEVIATION_CAP_PER_LAP, PACE_DEVIATION_CAP_PER_LAP))
 
     # **Round 6 — the horizons on the two sides of the comparison have to
@@ -360,7 +428,9 @@ def simulate_strategy(
     # it's the more defensible assumption physically: a genuinely faster
     # car stays faster, where mean-reverting pace to the field average
     # after ten laps claims the field converges mid-race, which it doesn't.
-    pace_deviation = pace_deviation_per_lap * shared.n_laps
+    # Per simulation, not a single number: the point estimate plus that
+    # simulation's share of how wrong such estimates typically are.
+    pace_deviation = (pace_deviation_per_lap + shared.pace_error) * shared.n_laps
 
     cumulative_deviation = pace_deviation + (shared.noise + pit_time_loss).sum(axis=1)
     our_final_gap = state.gap_to_leader + cumulative_deviation
@@ -403,6 +473,11 @@ def simulate_strategy(
     # to hold. shape (n_simulations, n_rivals) -> (n_rivals, n_simulations)
     # to match rival_final_gaps.
     rival_final_gaps = np.where(shared.rival_retires.T, np.inf, rival_final_gaps)
+
+    # Belt and braces after the NaN guard above: a non-finite gap on either
+    # side would otherwise compare False and silently flatter this driver.
+    rival_final_gaps = np.where(np.isfinite(rival_final_gaps), rival_final_gaps, np.inf)
+    our_final_gap = np.where(np.isfinite(our_final_gap), our_final_gap, np.inf)
 
     final_position = 1 + (rival_final_gaps < our_final_gap[None, :]).sum(axis=0)
 

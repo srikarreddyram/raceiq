@@ -23,23 +23,33 @@ _PLAUSIBLE_STOP_RANGE = (15.0, 60.0)  # excludes damage/red-flag/drive-through o
 
 
 @lru_cache(maxsize=None)
-def _circuit_pit_loss() -> dict[str, float]:
+def _circuit_pit_loss(exclude_race_id: str | None = None) -> dict[str, float]:
     con = get_connection()
     try:
         rows = con.execute(
-            """
+            f"""
             SELECT r.circuit_id, AVG(ps.stop_duration_seconds) AS avg_loss
             FROM silver.pit_stops ps
             JOIN silver.races r ON r.race_id = ps.race_id
             WHERE ps.stop_duration_seconds BETWEEN ? AND ?
+                {"AND ps.race_id != ?" if exclude_race_id else ""}
             GROUP BY r.circuit_id
             """,
-            list(_PLAUSIBLE_STOP_RANGE),
+            [*_PLAUSIBLE_STOP_RANGE, *([exclude_race_id] if exclude_race_id else [])],
         ).df()
     finally:
         con.close()
     return {row.circuit_id: row.avg_loss for row in rows.itertuples()}
 
 
-def typical_pit_loss_seconds(circuit_id: str) -> float:
-    return float(_circuit_pit_loss().get(circuit_id, _DEFAULT_PIT_LOSS_SECONDS))
+def typical_pit_loss_seconds(circuit_id: str, exclude_race_id: str | None = None) -> float:
+    """Average pit loss at a circuit.
+
+    `exclude_race_id` exists for race_plan/: a plan made before the start
+    cannot know what pit stops took in the race it's planning, and at a
+    brand-new circuit that race is the ONLY data — so without excluding it
+    the planner would quietly be reading the answer. Excluded, a new
+    circuit correctly falls through to the cross-circuit default, which is
+    the honest position to be in before anyone has raced there.
+    """
+    return float(_circuit_pit_loss(exclude_race_id).get(circuit_id, _DEFAULT_PIT_LOSS_SECONDS))

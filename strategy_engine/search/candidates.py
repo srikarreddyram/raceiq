@@ -31,7 +31,7 @@ from itertools import combinations, product
 
 from strategy_engine.oracles import predict_remaining_tyre_life
 from strategy_engine.state import RaceState
-from strategy_engine.tyre_baselines import typical_degradation_rate
+from strategy_engine.tyre_baselines import typical_degradation_rate, typical_max_stint_length
 
 FEASIBILITY_TOLERANCE = 0.15  # the tyre model's own measured MAE is several laps; don't over-reject on a point estimate
 
@@ -58,32 +58,75 @@ def _stint_feasible(state: RaceState, compound: str, stint_length: int, is_curre
     return stint_length <= remaining_life * (1 + FEASIBILITY_TOLERANCE)
 
 
+def _stint_feasible_empirical(
+    state: RaceState, compound: str, stint_length: int, _is_current: bool, exclude_race_id: str | None = None
+) -> bool:
+    """Feasibility from stint lengths teams have actually run at this
+    circuit, instead of from the Tyre Degradation model.
+
+    Needed because that model systematically under-predicts how long a
+    stint lasts — at Bahrain it puts a fresh SOFT/MEDIUM/HARD at
+    10.8/12.6/16.8 laps against observed 75th-percentile stints of
+    19/25/24. In-race that bias is survivable, since only part of the race
+    is left to cover. Planning a full race from the grid, it's fatal: three
+    stints capped near 17 laps can't cover 57, so every candidate is
+    rejected and the planner returns nothing at all.
+    """
+    return stint_length <= typical_max_stint_length(state.circuit_id, compound, exclude_race_id) * (
+        1 + FEASIBILITY_TOLERANCE
+    )
+
+
 def _uses_two_compounds(state: RaceState, plan: tuple[tuple[int, str], ...]) -> bool:
     compounds_used = set(state.compounds_used_this_race) | {c for _, c in plan}
     return len(compounds_used) >= 2
 
 
-def generate_candidates(state: RaceState, lap_step: int = 2, max_pit_laps_per_stop: int = 12) -> list[Strategy]:
+def generate_candidates(
+    state: RaceState,
+    lap_step: int = 2,
+    max_pit_laps_per_stop: int = 12,
+    feasibility: str = "model",
+    exclude_race_id: str | None = None,
+) -> list[Strategy]:
+    """Enumerate legal remaining strategies.
+
+    `feasibility` picks what decides whether a stint length is runnable:
+    "model" uses the Tyre Degradation model (the in-race default, left
+    unchanged because every verified scenario was checked against it), and
+    "empirical" uses observed stint lengths at this circuit. race_plan/
+    uses "empirical" — see _stint_feasible_empirical for why the model
+    basis can't plan a full race from the grid.
+
+    `exclude_race_id` drops one race from those observed stint lengths, so
+    a pre-race plan can't be built from the race it is planning. It only
+    applies to the empirical basis.
+    """
+    if feasibility == "model":
+        feasible = _stint_feasible
+    else:
+        def feasible(st, compound, stint_length, is_current):  # noqa: ANN001 -- local adapter
+            return _stint_feasible_empirical(st, compound, stint_length, is_current, exclude_race_id)
     candidates: list[Strategy] = []
     remaining_laps = list(range(state.current_lap + 1, state.race_total_laps + 1, lap_step))
     compounds = state.available_compounds
 
     # 0-stop: finish on the current tyres.
     stint_length = state.race_total_laps - state.current_lap
-    if _uses_two_compounds(state, ()) and _stint_feasible(state, state.compound, stint_length, True):
+    if _uses_two_compounds(state, ()) and feasible(state, state.compound, stint_length, True):
         candidates.append(Strategy(pit_plan=(), label="No further stops"))
 
     # 1-stop.
     for pit_lap in remaining_laps:
         first_stint = pit_lap - state.current_lap
-        if not _stint_feasible(state, state.compound, first_stint, True):
+        if not feasible(state, state.compound, first_stint, True):
             continue
         for compound in compounds:
             second_stint = state.race_total_laps - pit_lap
             plan = ((pit_lap, compound),)
             if not _uses_two_compounds(state, plan):
                 continue
-            if not _stint_feasible(state, compound, second_stint, False):
+            if not feasible(state, compound, second_stint, False):
                 continue
             candidates.append(Strategy(pit_plan=plan, label=f"Pit lap {pit_lap} -> {compound}"))
 
@@ -91,7 +134,7 @@ def generate_candidates(state: RaceState, lap_step: int = 2, max_pit_laps_per_st
     sparse_laps = remaining_laps[::2][:max_pit_laps_per_stop]
     for pit_lap_1, pit_lap_2 in combinations(sparse_laps, 2):
         first_stint = pit_lap_1 - state.current_lap
-        if not _stint_feasible(state, state.compound, first_stint, True):
+        if not feasible(state, state.compound, first_stint, True):
             continue
         middle_stint = pit_lap_2 - pit_lap_1
         final_stint = state.race_total_laps - pit_lap_2
@@ -99,9 +142,9 @@ def generate_candidates(state: RaceState, lap_step: int = 2, max_pit_laps_per_st
             plan = ((pit_lap_1, compound_1), (pit_lap_2, compound_2))
             if not _uses_two_compounds(state, plan):
                 continue
-            if not _stint_feasible(state, compound_1, middle_stint, False):
+            if not feasible(state, compound_1, middle_stint, False):
                 continue
-            if not _stint_feasible(state, compound_2, final_stint, False):
+            if not feasible(state, compound_2, final_stint, False):
                 continue
             candidates.append(
                 Strategy(
