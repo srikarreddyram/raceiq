@@ -86,6 +86,14 @@ def build(con: duckdb.DuckDBPyConnection) -> None:
             "pit_stop_duration",
             "track_status_code",
             "gap_to_leader",
+            # Carried through for car_profiles/ (PRD Section 8.1), whose
+            # `downforce_proxy` characteristic is defined as sector 2
+            # (high-downforce) pace delta versus sectors 1+3 (low-downforce)
+            # relative to the field — it can't be derived from whole-lap
+            # times, and FastF1 has had these in Bronze all along.
+            "sector1_time_seconds",
+            "sector2_time_seconds",
+            "sector3_time_seconds",
         ]
     ]
     write_silver_table(con, "laps", final)

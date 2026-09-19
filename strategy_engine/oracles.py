@@ -75,6 +75,14 @@ def predict_next_lap_time(state: RaceState) -> float:
         "rival_driver_id": state.rival_ahead.driver_id if state.rival_ahead else None,
         "rival_team_id": state.rival_ahead.team_id if state.rival_ahead else None,
         "rival_compound": state.rival_ahead.compound if state.rival_ahead else None,
+        # The Lap Time model now takes CarProfile characteristics (PRD
+        # Section 8), which measurably improve it — see
+        # car_profiles/evaluate_lift.py. Passed through explicitly so an
+        # unknown profile stays NaN (missing, which LightGBM handles
+        # natively) instead of falling through to _row_from's 0 default,
+        # where it would read as "this car is exactly average at
+        # everything".
+        **{col: (np.nan if value is None else value) for col, value in state.car_profile.items()},
     }
     row = _row_from(state, values, LAP_TIME_FEATURES)
     return float(model.predict(row)[0])

@@ -21,6 +21,22 @@ import pandas as pd
 
 DRY_COMPOUNDS = ("SOFT", "MEDIUM", "HARD")
 
+# The CarProfile columns gold.race_features carries (see
+# pipelines/gold/race_features.py's join against gold.car_profiles).
+CAR_PROFILE_COLUMNS = (
+    "car_tyre_warmup_rate",
+    "car_cold_tyre_pace_loss",
+    "car_downforce_proxy",
+    "car_degradation_vs_field",
+    "car_degradation_rate_soft",
+    "car_degradation_rate_medium",
+    "car_degradation_rate_hard",
+    "car_safety_car_restart_pace",
+    "car_undercut_vulnerability",
+    "car_tyre_temp_sensitivity",
+    "car_aero_sensitivity",
+)
+
 
 @dataclass
 class RivalState:
@@ -67,6 +83,16 @@ class RaceState:
     historical_sc_rate: float | None
     historical_dnf_rate: float | None
     circuit_baseline_track_temp: float | None
+
+    # CarProfile characteristics for this team (PRD Section 8), inferred
+    # from their prior races this season. Carried on the state rather than
+    # left to oracles.py's default-fill because that default is 0, and 0 is
+    # a *meaningful* value for every one of these (they're deltas against
+    # the field) — an unknown profile silently reading as "exactly average
+    # in every respect" would be a quiet lie to the Lap Time model, which
+    # now uses them. None here means genuinely unknown, e.g. a season
+    # opener with no prior races to infer from.
+    car_profile: dict[str, float | None] = field(default_factory=dict)
 
     # The car directly ahead — the only rival our Gold features actually
     # describe (rival_driver_id/team_id/compound/tyre_age all mean "car
@@ -128,6 +154,7 @@ class RaceState:
             historical_sc_rate=row.get("historical_sc_rate"),
             historical_dnf_rate=row.get("historical_dnf_rate"),
             circuit_baseline_track_temp=row.get("circuit_baseline_track_temp"),
+            car_profile={col: row.get(col) for col in CAR_PROFILE_COLUMNS},
             rival_ahead=rival,
             compounds_used_this_race={row["compound"]},
         )

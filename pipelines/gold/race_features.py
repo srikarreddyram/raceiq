@@ -29,10 +29,30 @@ SELECT
     ch.circuit_baseline_track_temp,
     ch.condition_delta,
     ch.historical_sc_rate,
-    ch.historical_dnf_rate
+    ch.historical_dnf_rate,
+    -- CarProfile characteristics (PRD Section 8), joined on (race, team).
+    -- Every column is inferred strictly from that team's PRIOR races in
+    -- the same season (see car_profiles/inference/characteristics.py), so
+    -- joining them onto this race's own rows introduces no leakage.
+    -- LEFT JOIN, not INNER: a team's first race of a season has no profile
+    -- yet, and dropping those rows would quietly delete every season
+    -- opener from the training set.
+    cp.races_observed AS car_profile_races_observed,
+    cp.tyre_warmup_rate AS car_tyre_warmup_rate,
+    cp.cold_tyre_pace_loss AS car_cold_tyre_pace_loss,
+    cp.downforce_proxy AS car_downforce_proxy,
+    cp.degradation_vs_field AS car_degradation_vs_field,
+    cp.degradation_rate_soft AS car_degradation_rate_soft,
+    cp.degradation_rate_medium AS car_degradation_rate_medium,
+    cp.degradation_rate_hard AS car_degradation_rate_hard,
+    cp.safety_car_restart_pace AS car_safety_car_restart_pace,
+    cp.undercut_vulnerability AS car_undercut_vulnerability,
+    cp.tyre_temp_sensitivity AS car_tyre_temp_sensitivity,
+    cp.aero_sensitivity AS car_aero_sensitivity
 FROM gold.lap_features lf
 LEFT JOIN gold.driver_history dh ON dh.driver_id = lf.driver_id AND dh.race_id = lf.race_id
 LEFT JOIN gold.circuit_history ch ON ch.race_id = lf.race_id
+LEFT JOIN gold.car_profiles cp ON cp.race_id = lf.race_id AND cp.team_id = lf.team_id
 """
 
 

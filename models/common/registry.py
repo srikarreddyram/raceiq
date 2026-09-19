@@ -38,6 +38,7 @@ from __future__ import annotations
 import lightgbm  # noqa: F401 -- see module docstring; import order matters here
 import torch  # noqa: F401 -- same reasoning, for load_latest_pytorch_model
 
+import os
 from functools import lru_cache
 
 import mlflow
@@ -69,16 +70,31 @@ def _latest_run_id(client: MlflowClient, experiment_name: str, run_name: str) ->
     return runs[0].info.run_id
 
 
+def _use_candidate_models() -> bool:
+    """When set, skip the production alias and load the newest run instead.
+
+    retraining/run.py sets this while running the validation suite. Without
+    it that pipeline can't ever promote a model whose feature list changed:
+    validation would load the *currently promoted* model, which by
+    definition predates the change, and fail against the new feature
+    list — blocking promotion of the very fix it was testing. Validation
+    has to exercise the candidate it's about to promote, not the incumbent
+    it's about to replace.
+    """
+    return os.environ.get("RACEIQ_USE_CANDIDATE_MODELS", "").lower() in {"1", "true", "yes"}
+
+
 def _resolve_model_uri(experiment_name: str, run_name: str) -> str:
     mlflow.set_tracking_uri(f"sqlite:///{MLFLOW_DB_PATH}")
     client = MlflowClient()
     registered_name = _registered_model_name(experiment_name, run_name)
 
-    try:
-        version = client.get_model_version_by_alias(registered_name, PRODUCTION_ALIAS)
-        return f"models:/{registered_name}@{PRODUCTION_ALIAS}", version.run_id
-    except MlflowException:
-        pass  # never promoted (yet) -- fall back to the newest run by name
+    if not _use_candidate_models():
+        try:
+            version = client.get_model_version_by_alias(registered_name, PRODUCTION_ALIAS)
+            return f"models:/{registered_name}@{PRODUCTION_ALIAS}", version.run_id
+        except MlflowException:
+            pass  # never promoted (yet) -- fall back to the newest run by name
 
     run_id = _latest_run_id(client, experiment_name, run_name)
     return f"runs:/{run_id}/model", run_id

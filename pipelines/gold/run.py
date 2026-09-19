@@ -13,15 +13,23 @@ from __future__ import annotations
 
 import logging
 
+from car_profiles.inference import characteristics as car_profiles
 from pipelines.gold import circuit_history, driver_history, lap_features, race_features
 from pipelines.gold.db import get_connection
 
 logger = logging.getLogger(__name__)
 
+# car_profiles lives under car_profiles/ to match the PRD's repository
+# layout (Section 18), but it writes a Gold table and sits squarely in the
+# Gold dependency chain — it reads lap_features and race_features reads it
+# — so it's orchestrated here. Keeping it out of this list would let
+# `pipelines.gold.run` finish "successfully" while race_features silently
+# joined against a stale profile table.
 BUILD_ORDER = [
     ("lap_features", lap_features.build),
     ("driver_history", driver_history.build),
     ("circuit_history", circuit_history.build),
+    ("car_profiles", car_profiles.build),
     ("race_features", race_features.build),
 ]
 

@@ -30,6 +30,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -107,7 +108,16 @@ def _validate() -> bool:
     checks has no business being promoted, and a second, looser bar here
     would just be a way to quietly let a worse model through.
     """
-    result = subprocess.run([sys.executable, "-m", "pytest", "tests/", "-q"])
+    # RACEIQ_USE_CANDIDATE_MODELS makes models/common/registry.py resolve
+    # to the newest run instead of whatever currently holds the production
+    # alias. Without it this step validates the model it's about to
+    # REPLACE rather than the one it's about to promote — which, the first
+    # time a model's feature list changed (CarProfile features joining Lap
+    # Time), deadlocked the pipeline: validation loaded the older promoted
+    # model, failed against the new feature list, and blocked promotion of
+    # the very change under test.
+    env = {**os.environ, "RACEIQ_USE_CANDIDATE_MODELS": "1"}
+    result = subprocess.run([sys.executable, "-m", "pytest", "tests/", "-q"], env=env)
     return result.returncode == 0
 
 

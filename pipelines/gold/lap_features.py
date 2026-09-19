@@ -162,8 +162,25 @@ SELECT
     wt.lap_time_seconds,
     wt.field_avg_lap_time_seconds,
     (wt.lap_time_seconds - wt.field_avg_lap_time_seconds) AS pace_delta_this_lap,
-    wt.degradation_rate,
-    (wt.lap_time_seconds - wt.stint_first_lap_time) AS grip_estimate
+    -- regr_slope returns a floating-point NaN (not NULL) when every lap in
+    -- the expanding stint window shares one tyre_age, which leaves the x
+    -- variance at zero — common at the start of a stint. NaN is a poison
+    -- value here in a way NULL is not: DuckDB orders NaN above every
+    -- number, so it silently turns MAX() into NaN and makes STDDEV_SAMP
+    -- raise outright (found when car_profiles/ first tried to aggregate
+    -- this column across races). LightGBM happens to treat both as
+    -- missing, which is why ~10k of these sat in the feature store
+    -- unnoticed. Collapsing them to NULL says the true thing — the slope
+    -- is undefined, not enormous.
+    CASE WHEN isnan(wt.degradation_rate) THEN NULL ELSE wt.degradation_rate END AS degradation_rate,
+    (wt.lap_time_seconds - wt.stint_first_lap_time) AS grip_estimate,
+    -- Passed straight through for car_profiles/ (PRD Section 8.1's
+    -- downforce_proxy). Not model features themselves: a sector time is
+    -- just a slice of the lap time the model is already given, so feeding
+    -- all three alongside it would add collinearity, not information.
+    wt.sector1_time_seconds,
+    wt.sector2_time_seconds,
+    wt.sector3_time_seconds
 FROM with_tyre wt
 LEFT JOIN race_totals rt ON rt.race_id = wt.race_id
 ASOF LEFT JOIN silver.weather wthr

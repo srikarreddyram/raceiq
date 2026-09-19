@@ -62,6 +62,28 @@ NUMERIC_FEATURES = [
     "condition_delta",
     "current_position",
     "rival_tyre_age",
+    # CarProfile characteristics (PRD Section 8), inferred per team from
+    # their prior races this season — see car_profiles/inference/.
+    #
+    # Added here and ONLY here, on measured evidence rather than on the
+    # PRD's say-so: car_profiles/evaluate_lift.py trains this model three
+    # ways on identical splits, and the profile beats a team-agnostic
+    # baseline by 15.1% stable-regime MAE and a bare team_id categorical by
+    # a further 4.4% — i.e. describing the car genuinely beats merely
+    # naming it. The same experiment found no lift for Tyre Degradation
+    # (+0.05% vs team_id, noise) and an outright regression for Pit Stop,
+    # so neither of those got these columns.
+    "car_tyre_warmup_rate",
+    "car_cold_tyre_pace_loss",
+    "car_downforce_proxy",
+    "car_degradation_vs_field",
+    "car_degradation_rate_soft",
+    "car_degradation_rate_medium",
+    "car_degradation_rate_hard",
+    "car_safety_car_restart_pace",
+    "car_undercut_vulnerability",
+    "car_tyre_temp_sensitivity",
+    "car_aero_sensitivity",
 ]
 BOOLEAN_FEATURES = [
     "is_pit_lap",
