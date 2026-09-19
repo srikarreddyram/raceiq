@@ -116,6 +116,7 @@ def build_recommendation(
         },
         "recommended_strategy": {
             "action": top.label,
+            "pit_plan": [list(stop) for stop in top.pit_plan],
             "win_probability": top.win_probability,
             "podium_probability": top.podium_probability,
             "points_probability": top.points_probability,
@@ -123,6 +124,7 @@ def build_recommendation(
             "expected_points": top.expected_points,
             "risk_score": top.risk_score,
             "strategy_score": top.strategy_score,
+            "safety_car_encounter_rate": top.safety_car_encounter_rate,
             "finish_distribution": top.finish_distribution,
         },
         "reasoning": build_reasoning(
@@ -131,6 +133,7 @@ def build_recommendation(
         "alternatives": [
             {
                 "action": alt.label,
+                "pit_plan": [list(stop) for stop in alt.pit_plan],
                 "win_probability": alt.win_probability,
                 "podium_probability": alt.podium_probability,
                 "expected_finish": alt.expected_finish,

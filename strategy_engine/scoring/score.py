@@ -33,6 +33,11 @@ SCORE_WEIGHTS = {"expected_points": 0.6, "podium_probability": 0.3, "win_probabi
 @dataclass
 class StrategyScore:
     label: str
+    # The machine-readable form of `label`. `label` is display text ("Pit
+    # lap 21 -> HARD, lap 41 -> SOFT"); carrying the plan itself alongside
+    # it means an API client wanting to re-simulate or chart a strategy
+    # doesn't have to parse that sentence back into data.
+    pit_plan: tuple[tuple[int, str], ...]
     win_probability: float
     podium_probability: float
     points_probability: float
@@ -65,6 +70,7 @@ def score_strategy(result: SimulationResult, weights: dict[str, float] = SCORE_W
 
     return StrategyScore(
         label=result.strategy.label,
+        pit_plan=result.strategy.pit_plan,
         win_probability=win_probability,
         podium_probability=podium_probability,
         points_probability=points_probability,

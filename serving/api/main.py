@@ -16,7 +16,10 @@ Run with:
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from serving.api.routers import circuits, drivers, predictions, races
 
@@ -24,6 +27,19 @@ app = FastAPI(
     title="RaceIQ API",
     description="Circuit-adaptive F1 race strategy intelligence — PRD Section 14",
     version="0.1.0",
+)
+
+# The frontend (PRD Section 13) is served by Vite on its own port in
+# development, so every browser request to this API is cross-origin.
+# Defaults to the local Vite ports only — an explicit list rather than
+# `allow_origins=["*"]`, since a wildcard here would be a habit worth not
+# forming before this is ever deployed anywhere real.
+_DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.environ.get("RACEIQ_CORS_ORIGINS", _DEFAULT_ORIGINS).split(","),
+    allow_methods=["GET", "POST", "PUT"],
+    allow_headers=["Content-Type"],
 )
 
 app.include_router(circuits.router)

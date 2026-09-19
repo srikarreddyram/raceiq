@@ -44,6 +44,12 @@ catboost_info/
 .vscode/
 .idea/
 
+# Frontend (PRD Section 13)
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
 # Docker
 docker/**/*.log
 

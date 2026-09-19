@@ -63,12 +63,28 @@ class StrategyRequest(BaseModel):
 
 class ScoredStrategy(BaseModel):
     action: str
+    # `action` is display text; `pit_plan` is the same strategy as data, so
+    # a client can re-simulate or chart it without parsing that sentence.
+    pit_plan: list[tuple[int, str]]
     win_probability: float
     podium_probability: float
     expected_finish: float
     expected_points: float
     risk_score: float
     strategy_score: float
+
+
+class RecommendedStrategy(ScoredStrategy):
+    """The top-ranked strategy carries more than the alternatives do: the
+    simulation already computes its full outcome distribution and
+    safety-car encounter rate, and a dashboard charting the recommendation
+    needs both. They were being dropped at this boundary purely because
+    the schema didn't name them.
+    """
+
+    points_probability: float
+    safety_car_encounter_rate: float
+    finish_distribution: dict[int, float]
 
 
 class StrategyRecommendation(BaseModel):
@@ -85,7 +101,7 @@ class StrategyRecommendation(BaseModel):
     # strategy_engine/oracles.py's docstrings).
     win_probability_model_estimate: float
     expected_finish_model_estimate: float
-    recommended_strategy: ScoredStrategy
+    recommended_strategy: RecommendedStrategy
     reasoning: list[str]
     alternatives: list[ScoredStrategy]
 
