@@ -30,6 +30,7 @@ SELECT
     ch.condition_delta,
     ch.historical_sc_rate,
     ch.historical_dnf_rate,
+    ch.historical_overtaking_rate,
     -- CarProfile characteristics (PRD Section 8), joined on (race, team).
     -- Every column is inferred strictly from that team's PRIOR races in
     -- the same season (see car_profiles/inference/characteristics.py), so

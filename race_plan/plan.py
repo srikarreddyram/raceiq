@@ -28,12 +28,10 @@ Three things that differ from the in-race engine:
    means it doesn't, and the strategist should spend their attention
    elsewhere.
 
-What this does NOT do is allocate tyre sets across practice — which set
-to scrub in FP1, which to save for Q3 and the race. That needs FP1-FP3
-session data, and this project has only ever ingested race sessions
-(`bronze.fastf1_laps` holds 202,577 laps, all session_type 'R'). Rather
-than guess at it, race_plan/tyre_allocation.py records exactly what that
-would take.
+Tyre-set allocation across the weekend lives in
+race_plan/tyre_allocation.py and is printed alongside this plan: what the
+race needs is reserved first, then qualifying, and the remainder is the
+practice budget.
 
 Usage:
     uv run python -m race_plan.plan --race-id 2026_7 --driver leclerc
@@ -42,6 +40,7 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -142,8 +141,20 @@ def _grid_position(race_id: str, driver_id: str) -> int | None:
     return grid if grid > 0 else 20
 
 
+@lru_cache(maxsize=1)
+def _cached_race_features() -> pd.DataFrame:
+    """One Gold load per process.
+
+    `load_race_features()` pulls ~205k rows, and anything that builds many
+    plans in a loop — the overtaking calibration sweep, a batch of drivers —
+    was paying that cost per call. Cached here rather than inside
+    models/common/data.py, which other callers expect to return fresh data.
+    """
+    return load_race_features()
+
+
 def _starting_state(race_id: str, driver_id: str) -> tuple[RaceState, pd.DataFrame]:
-    df = load_race_features()
+    df = _cached_race_features()
     race_rows = df[df.race_id == race_id]
     if race_rows.empty:
         raise ValueError(f"No Gold rows for race_id={race_id!r}")
@@ -433,6 +444,17 @@ def main() -> None:
 
     plan = build_race_plan(args.race_id, args.driver, n_simulations=args.n_simulations)
     print(format_plan(plan))
+
+    # The allocation follows the race plan rather than being decided
+    # separately: what the race needs is what gets reserved first.
+    from race_plan.tyre_allocation import format_allocation, recommend_tyre_allocation
+
+    print()
+    print(
+        format_allocation(
+            recommend_tyre_allocation(args.race_id, args.driver, plan.compound_sequence)
+        )
+    )
 
 
 if __name__ == "__main__":

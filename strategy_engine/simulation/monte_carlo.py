@@ -160,6 +160,23 @@ DEFAULT_DNF_RATE = 0.15  # this project's own dataset-wide average, for circuits
 PACE_ESTIMATE_UNCERTAINTY_IN_RACE = 0.634
 PACE_ESTIMATE_UNCERTAINTY_PRE_RACE = 0.737
 
+# Track position is sticky: being quicker is not the same as getting past.
+# Ranking purely on projected time gaps assumes free overtaking, which made
+# a grid slot worth almost nothing — pole and P5 planned to the same
+# finishing position, because 5.8s of starting advantage is noise against a
+# race-long pace spread.
+#
+# A rival is therefore only passed if the time advantage exceeds a margin
+# that scales with how hard this circuit actually is to overtake at, using
+# gold.circuit_history.historical_overtaking_rate (measured on-track
+# position changes per green lap: Monaco 0.073, Las Vegas 0.377).
+# OVERTAKE_MARGIN_BASE_SECONDS is calibrated so simulated grid-to-flag
+# movement matches the 2.85 positions actually observed across this
+# project's data — see car_profiles/... no: see the calibration in
+# race_plan/calibrate_overtaking.py.
+MEDIAN_OVERTAKING_RATE = 0.17
+OVERTAKE_MARGIN_BASE_SECONDS = 20.0
+
 
 @dataclass
 class SimulationResult:
@@ -182,6 +199,7 @@ class SharedContext:
     noise: np.ndarray  # shape (n_simulations, n_laps)
     rival_retires: np.ndarray  # shape (n_simulations, n_rivals), bool — see build_shared_context
     pace_error: np.ndarray  # shape (n_simulations,), seconds per lap — see build_shared_context
+    rival_pace_error: np.ndarray  # shape (n_simulations, n_rivals), same units
 
 
 def _safety_car_row(state: RaceState, lap_number: int) -> pd.DataFrame:
@@ -323,12 +341,22 @@ def build_shared_context(
     # reporting 100% win probabilities.
     pace_error = rng.normal(0.0, pace_uncertainty, size=n_simulations)
 
+    # Rivals get the same per-lap pace uncertainty, for the same reason
+    # round 6 made the projection horizons match: an estimate this driver
+    # is uncertain about is equally uncertain for everyone else. Previously
+    # only RIVAL_PACE_NOISE_PER_LAP applied to them, which over a race is
+    # ~3.8s against this driver's ~42s — an 11x asymmetry that made a
+    # finishing position mostly a lottery on our own pace draw and left the
+    # grid, worth ~16s from pole to P16, unable to compete with it.
+    rival_pace_error = rng.normal(0.0, pace_uncertainty, size=(n_simulations, max(len(rivals), 1)))
+
     return SharedContext(
         n_laps=n_laps,
         sc_occurs=sc_occurs,
         noise=noise,
         rival_retires=rival_retires,
         pace_error=pace_error,
+        rival_pace_error=rival_pace_error,
     )
 
 
@@ -467,6 +495,10 @@ def simulate_strategy(
         axis=0,
     )  # shape (n_rivals, n_simulations)
 
+    # Their share of the same pace-estimate uncertainty this driver carries.
+    if rivals:
+        rival_final_gaps = rival_final_gaps + shared.rival_pace_error[:, : len(rivals)].T * shared.n_laps
+
     # A retired rival (shared.rival_retires, drawn once per race state and
     # reused for every candidate — see build_shared_context) no longer
     # finishes ahead of anyone, regardless of the gap they were projected
@@ -479,7 +511,22 @@ def simulate_strategy(
     rival_final_gaps = np.where(np.isfinite(rival_final_gaps), rival_final_gaps, np.inf)
     our_final_gap = np.where(np.isfinite(our_final_gap), our_final_gap, np.inf)
 
-    final_position = 1 + (rival_final_gaps < our_final_gap[None, :]).sum(axis=0)
+    # Track position is sticky (see OVERTAKE_MARGIN_BASE_SECONDS). A rival
+    # who is ahead keeps the place unless this driver beats them by the
+    # circuit's passing margin; one who is behind only gets by if THEY
+    # clear it. At Monaco that margin is large enough that the grid order
+    # largely survives, which is the whole point.
+    overtaking_rate = state.historical_overtaking_rate
+    if overtaking_rate is None or not np.isfinite(overtaking_rate) or overtaking_rate <= 0:
+        overtaking_rate = MEDIAN_OVERTAKING_RATE
+    passing_margin = OVERTAKE_MARGIN_BASE_SECONDS * (MEDIAN_OVERTAKING_RATE / overtaking_rate)
+
+    started_ahead = np.array(
+        [rival.gap_to_leader < state.gap_to_leader for rival in rivals], dtype=bool
+    )[:, None]
+    threshold = np.where(started_ahead, our_final_gap[None, :] + passing_margin, our_final_gap[None, :] - passing_margin)
+
+    final_position = 1 + (rival_final_gaps < threshold).sum(axis=0)
 
     return SimulationResult(
         strategy=strategy,

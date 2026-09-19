@@ -82,6 +82,7 @@ class RaceState:
     condition_delta: float | None
     historical_sc_rate: float | None
     historical_dnf_rate: float | None
+    historical_overtaking_rate: float | None
     circuit_baseline_track_temp: float | None
 
     # CarProfile characteristics for this team (PRD Section 8), inferred
@@ -153,6 +154,7 @@ class RaceState:
             condition_delta=row.get("condition_delta"),
             historical_sc_rate=row.get("historical_sc_rate"),
             historical_dnf_rate=row.get("historical_dnf_rate"),
+            historical_overtaking_rate=row.get("historical_overtaking_rate"),
             circuit_baseline_track_temp=row.get("circuit_baseline_track_temp"),
             car_profile={col: row.get(col) for col in CAR_PROFILE_COLUMNS},
             rival_ahead=rival,

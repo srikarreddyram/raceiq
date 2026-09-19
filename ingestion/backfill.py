@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from dataclasses import replace
 from datetime import date, datetime
 
 from fastf1.exceptions import RateLimitExceededError
@@ -61,21 +62,24 @@ def _backfill_ergast(season: int, round_number: int, config: IngestionConfig) ->
     time.sleep(REQUEST_SPACING_SECONDS)
 
 
-def _backfill_fastf1(season: int, round_number: int, config: IngestionConfig) -> None:
-    if _exists(config, "fastf1", str(season), str(round_number), "R", "results.parquet"):
+def _backfill_fastf1(
+    season: int, round_number: int, config: IngestionConfig, session_type: str = "R"
+) -> None:
+    if _exists(config, "fastf1", str(season), str(round_number), session_type, "results.parquet"):
         return
 
     for attempt in range(1, FASTF1_RATE_LIMIT_MAX_RETRIES + 1):
         try:
-            ingest_fastf1_session(season, round_number, "R", with_telemetry=False)
+            ingest_fastf1_session(season, round_number, session_type, with_telemetry=False)
             return
         except RateLimitExceededError:
             if attempt == FASTF1_RATE_LIMIT_MAX_RETRIES:
                 raise
             logger.warning(
-                "FastF1 rate limit hit on %s round %s (attempt %s/%s) — sleeping %ss",
+                "FastF1 rate limit hit on %s round %s %s (attempt %s/%s) — sleeping %ss",
                 season,
                 round_number,
+                session_type,
                 attempt,
                 FASTF1_RATE_LIMIT_MAX_RETRIES,
                 FASTF1_RATE_LIMIT_BACKOFF_SECONDS,
@@ -137,10 +141,13 @@ def backfill_season(season: int, config: IngestionConfig) -> None:
         except Exception:
             logger.exception("Ergast ingestion failed for %s round %s", season, round_number)
 
-        try:
-            _backfill_fastf1(season, round_number, config)
-        except Exception:
-            logger.exception("FastF1 ingestion failed for %s round %s", season, round_number)
+        for session_type in config.fastf1_session_types:
+            try:
+                _backfill_fastf1(season, round_number, config, session_type)
+            except Exception:
+                logger.exception(
+                    "FastF1 ingestion failed for %s round %s %s", season, round_number, session_type
+                )
 
         try:
             _backfill_openf1(season, round_number, race_date, config)
@@ -157,11 +164,22 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     parser = argparse.ArgumentParser(description="Backfill all ingestion sources across a season range")
+    parser.add_argument(
+        "--sessions",
+        default=None,
+        help=(
+            "Comma-separated FastF1 session types to ingest (e.g. 'R' or 'FP1,FP2,FP3,Q,R'). "
+            "Defaults to RACEIQ_FASTF1_SESSIONS, itself defaulting to 'R'. Each extra session "
+            "roughly multiplies the run against FastF1's ~500 calls/hour limit."
+        ),
+    )
     parser.add_argument("--start-season", type=int, default=2018)
     parser.add_argument("--end-season", type=int, default=date.today().year)
     args = parser.parse_args()
 
     config = load_config()
+    if args.sessions:
+        config = replace(config, fastf1_session_types=tuple(s.strip() for s in args.sessions.split(",")))
     for season in range(args.start_season, args.end_season + 1):
         logger.info("########## Backfilling season %s ##########", season)
         backfill_season(season, config)

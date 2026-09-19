@@ -73,6 +73,37 @@ WITH race_conditions AS (
     JOIN gold.lap_features lf ON lf.race_id = r.race_id
     GROUP BY r.race_id, r.circuit_id, r.date
 ),
+race_overtaking AS (
+    -- How much the order actually moves on track at this circuit, per
+    -- race: the mean absolute position change from one green lap to the
+    -- next, ignoring pit laps (a pit cycle reshuffles the order without
+    -- anyone passing) and caution laps (nobody overtakes under a safety
+    -- car). This is PRD Section 9.1's overtaking_difficulty_score,
+    -- measured rather than assigned: it puts Monaco at 0.058 changes per
+    -- lap against Las Vegas at 0.298, which is the right ordering and
+    -- roughly the right ratio.
+    SELECT
+        seq.race_id,
+        AVG(ABS(seq.current_position - seq.prev_position)) AS position_changes_per_lap
+    FROM (
+        SELECT
+            rf.race_id,
+            rf.current_position,
+            rf.is_pit_lap,
+            rf.safety_car_active,
+            rf.vsc_active,
+            rf.red_flag_active,
+            LAG(rf.current_position) OVER w AS prev_position,
+            LAG(rf.is_pit_lap) OVER w AS prev_is_pit_lap
+        FROM gold.lap_features rf
+        WHERE rf.lap_number > 2
+        WINDOW w AS (PARTITION BY rf.race_id, rf.driver_id ORDER BY rf.lap_number)
+    ) seq
+    WHERE seq.prev_position IS NOT NULL
+        AND NOT seq.is_pit_lap AND NOT seq.prev_is_pit_lap
+        AND NOT seq.safety_car_active AND NOT seq.vsc_active AND NOT seq.red_flag_active
+    GROUP BY seq.race_id
+),
 with_baseline AS (
     SELECT
         this.race_id,
@@ -81,10 +112,12 @@ with_baseline AS (
         AVG(prior.race_avg_track_temp) AS circuit_baseline_track_temp,
         AVG(prior.race_avg_air_temp) AS circuit_baseline_air_temp,
         AVG(prior.race_had_safety_car) AS historical_sc_rate,
+        AVG(prior_overtaking.position_changes_per_lap) AS historical_overtaking_rate,
         COUNT(prior.race_id) AS prior_races_at_circuit
     FROM race_conditions this
     LEFT JOIN race_conditions prior
         ON prior.circuit_id = this.circuit_id AND prior.date < this.date
+    LEFT JOIN race_overtaking prior_overtaking ON prior_overtaking.race_id = prior.race_id
     GROUP BY this.race_id, this.circuit_id, this.race_avg_track_temp
 ),
 race_attrition AS (
@@ -131,6 +164,7 @@ SELECT
     wb.circuit_baseline_track_temp,
     wb.circuit_baseline_air_temp,
     wb.historical_sc_rate,
+    wb.historical_overtaking_rate,
     COALESCE(dr.circuit_era_dnf_rate, dr.era_wide_dnf_rate, dr.all_time_dnf_rate) AS historical_dnf_rate,
     (wb.race_avg_track_temp - wb.circuit_baseline_track_temp) AS condition_delta
 FROM with_baseline wb

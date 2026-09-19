@@ -46,6 +46,14 @@ class IngestionConfig:
     max_retries: int
 
 
+    # Which FastF1 sessions to ingest. Defaults to the race alone, which is
+    # what every model and the whole Gold layer have been built on. Practice
+    # and qualifying are what race_plan/tyre_allocation.py needs, and are
+    # opt-in because each extra session type roughly multiplies the number of
+    # FastF1 calls a backfill makes against a ~500/hour limit.
+    fastf1_session_types: tuple[str, ...] = ("R",)
+
+
 def load_config() -> IngestionConfig:
     return IngestionConfig(
         raw_data_root=Path(os.environ.get("RACEIQ_DATA_ROOT", REPO_ROOT / "data" / "raw")),
@@ -59,4 +67,7 @@ def load_config() -> IngestionConfig:
         ),
         request_timeout_seconds=float(os.environ.get("RACEIQ_REQUEST_TIMEOUT", "30")),
         max_retries=int(os.environ.get("RACEIQ_MAX_RETRIES", "3")),
+        fastf1_session_types=tuple(
+            part.strip() for part in os.environ.get("RACEIQ_FASTF1_SESSIONS", "R").split(",") if part.strip()
+        ),
     )
