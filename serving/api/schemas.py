@@ -22,6 +22,54 @@ class CircuitProfile(Circuit):
     circuit_baseline_track_temp: float | None = None
 
 
+class CornerNode(BaseModel):
+    number: str
+    x: float
+    y: float
+    speed_class: str  # slow / medium / fast, PRD 7.1 thresholds
+    min_speed_kph: float
+    radius_m: float | None = None
+
+
+class CircuitMap(BaseModel):
+    """PRD Section 7.2's dashboard map plus Section 10.3's geometry
+    features. Coordinates are in a square viewBox of side `viewbox`."""
+
+    circuit_id: str
+    reference_race_id: str
+    # Which regulation era the lap came from — speeds and aero behaviour
+    # differ between them, and DRS doesn't exist from 2026.
+    reference_season: int
+    viewbox: float
+    svg_path: str
+    start_finish: list[float]
+    sector_boundaries: list[list[float]]
+    corners: list[CornerNode]
+    # null when the reference race's regulations have no DRS (2026+) or when
+    # DRS wasn't observed in that race — never [] meaning "has none".
+    drs_zones: list[str] | None
+    lap_length_m: float
+    corner_count: int
+    slow_corner_count: int
+    medium_corner_count: int
+    fast_corner_count: int
+    slow_corner_pct: float | None
+    avg_corner_radius_m: float | None
+    total_braking_distance_m: float
+    elevation_range_m: float
+    elevation_variance: float
+    sector1_avg_speed: float | None
+    sector2_avg_speed: float | None
+    sector3_avg_speed: float | None
+    downforce_demand_index: float
+    drs_zone_total_length_m: float | None
+    pit_lane_delta: float
+    tyre_stress_index: float | None
+    track_evolution_rate: float | None
+    detection_recall: float | None
+    detected_corner_count: int
+
+
 class Driver(BaseModel):
     driver_id: str
     driver_code: str | None = None

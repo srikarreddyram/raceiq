@@ -21,6 +21,50 @@ export type CircuitProfile = Circuit & {
   circuit_baseline_track_temp: number | null;
 };
 
+export type CornerNode = {
+  number: string;
+  x: number;
+  y: number;
+  speed_class: "slow" | "medium" | "fast";
+  min_speed_kph: number;
+  radius_m: number | null;
+};
+
+/** GET /circuits/{id}/map — coordinates live in a square viewBox of side `viewbox`. */
+export type CircuitMap = {
+  circuit_id: string;
+  reference_race_id: string;
+  reference_season: number;
+  viewbox: number;
+  svg_path: string;
+  start_finish: [number, number];
+  sector_boundaries: [number, number][];
+  corners: CornerNode[];
+  // null when the reference race's regulations have no DRS (2026+) or DRS
+  // wasn't observed — never [] meaning "has none".
+  drs_zones: string[] | null;
+  lap_length_m: number;
+  corner_count: number;
+  slow_corner_count: number;
+  medium_corner_count: number;
+  fast_corner_count: number;
+  slow_corner_pct: number | null;
+  avg_corner_radius_m: number | null;
+  total_braking_distance_m: number;
+  elevation_range_m: number;
+  elevation_variance: number;
+  sector1_avg_speed: number | null;
+  sector2_avg_speed: number | null;
+  sector3_avg_speed: number | null;
+  downforce_demand_index: number;
+  drs_zone_total_length_m: number | null;
+  pit_lane_delta: number;
+  tyre_stress_index: number | null;
+  track_evolution_rate: number | null;
+  detection_recall: number | null;
+  detected_corner_count: number;
+};
+
 export type Driver = {
   driver_id: string;
   driver_code: string | null;

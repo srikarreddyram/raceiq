@@ -15,6 +15,7 @@
 
 import type {
   Circuit,
+  CircuitMap,
   CircuitProfile,
   Driver,
   LapTimePrediction,
@@ -64,6 +65,7 @@ export const api = {
 
   circuits: () => request<Circuit[]>("/circuits"),
   circuitProfile: (circuitId: string) => request<CircuitProfile>(`/circuits/${circuitId}/profile`),
+  circuitMap: (circuitId: string) => request<CircuitMap>(`/circuits/${circuitId}/map`),
 
   drivers: (season?: number) => request<Driver[]>(`/drivers${season ? `?season=${season}` : ""}`),
   races: (season?: number) => request<Race[]>(`/races${season ? `?season=${season}` : ""}`),
