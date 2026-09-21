@@ -76,3 +76,15 @@ def test_map_endpoint_serves_overlay():
     assert all(0 <= c.x <= m.viewbox and 0 <= c.y <= m.viewbox for c in m.corners)
     assert m.drs_zones  # a 2025 reference: DRS era
     assert len(m.sector_boundaries) == 2
+
+
+def test_lap_time_model_uses_geometry_instead_of_circuit_id():
+    from models.common.circuit_geometry import CIRCUIT_GEOMETRY_COLUMNS
+    from models.common.registry import load_latest_model
+    from models.lap_time.train import FEATURE_COLUMNS
+
+    assert "circuit_id" not in FEATURE_COLUMNS
+    assert set(CIRCUIT_GEOMETRY_COLUMNS) <= set(FEATURE_COLUMNS)
+    # Whatever the oracle loads must have been trained on exactly this list,
+    # or strategy_engine/oracles.py builds rows the model can't read.
+    assert list(load_latest_model("lap_time_prediction").feature_name_) == FEATURE_COLUMNS

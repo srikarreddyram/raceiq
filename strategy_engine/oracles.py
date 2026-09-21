@@ -23,6 +23,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from models.common.circuit_geometry import circuit_geometry
 from models.common.registry import load_latest_model
 from models.lap_time.train import FEATURE_COLUMNS as LAP_TIME_FEATURES
 from models.race_position.train import FEATURE_COLUMNS as RACE_POSITION_FEATURES
@@ -83,6 +84,10 @@ def predict_next_lap_time(state: RaceState) -> float:
         # where it would read as "this car is exactly average at
         # everything".
         **{col: (np.nan if value is None else value) for col, value in state.car_profile.items()},
+        # Circuit geometry replaced circuit_id in this model — see
+        # models/lap_time/train.py. A circuit with no track map yet stays
+        # NaN for the same reason as an unknown CarProfile above.
+        **circuit_geometry(state.circuit_id),
     }
     row = _row_from(state, values, LAP_TIME_FEATURES)
     return float(model.predict(row)[0])

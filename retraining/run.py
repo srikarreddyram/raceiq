@@ -39,6 +39,9 @@ from models.common.registry import latest_run_id, register_and_promote
 from models.lap_time_sequence.train import EXPERIMENT_NAME as LSTM_EXPERIMENT
 from models.lap_time_sequence.train import RUN_NAME as LSTM_RUN_NAME
 from pipelines.gold.run import run as rebuild_gold
+from track_maps.reconstruction.fetch import RAW_ROOT as RAW_TRACK_MAPS
+from track_maps.run import build_all as build_circuit_geometry
+from track_maps.run import write_gold as write_circuit_geometry
 
 
 @dataclass(frozen=True)
@@ -124,6 +127,14 @@ def _validate() -> bool:
 def run() -> bool:
     print("=== Rebuilding Gold layer ===")
     rebuild_gold()
+
+    # The Lap Time model reads gold.circuit_geometry. Rebuilt from the
+    # cached reference-lap telemetry (fetching it is a separate, slow,
+    # rate-limited step: track_maps/reconstruction/fetch.py); with no cache
+    # the existing table is left as it is rather than replaced by nothing.
+    if any(RAW_TRACK_MAPS.glob("*/meta.json")):
+        print("=== Rebuilding track maps / circuit geometry ===")
+        write_circuit_geometry(build_circuit_geometry())
 
     print("=== Retraining all models ===")
     produced = _retrain_all()

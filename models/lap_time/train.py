@@ -34,6 +34,7 @@ import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
+from models.common.circuit_geometry import CIRCUIT_GEOMETRY_COLUMNS, add_circuit_geometry
 from models.common.data import load_race_features
 from models.common.features import CATEGORICAL_COLUMNS, apply_categorical_dtypes
 from models.common.splits import temporal_split
@@ -94,7 +95,19 @@ BOOLEAN_FEATURES = [
     "traffic_flag",
     "rainfall_flag",
 ]
-FEATURE_COLUMNS = NUMERIC_FEATURES + BOOLEAN_FEATURES + CATEGORICAL_COLUMNS
+# Circuit geometry (PRD Section 10.3) REPLACES the circuit_id categorical
+# here, on measured evidence: track_maps/evaluate_lift.py found that
+# describing the circuit beats naming it by 3.6% stable-regime MAE on
+# circuits seen in training, and by 8.0% on circuits held out of training
+# entirely — the Madring case, a venue with no history, where circuit_id
+# is an unknown category and says nothing. Keeping circuit_id alongside
+# the geometry was worse than either (a 30-way categorical invites trees to
+# memorise each circuit instead of generalising across similar ones). The
+# same experiment found no lift for Tyre Degradation or Pit Stop, and a
+# Safety Car "lift" on seen circuits that collapsed on unseen ones —
+# memorisation, not learning — so none of those got these columns.
+LAP_TIME_CATEGORICALS = [c for c in CATEGORICAL_COLUMNS if c != "circuit_id"]
+FEATURE_COLUMNS = NUMERIC_FEATURES + CIRCUIT_GEOMETRY_COLUMNS + BOOLEAN_FEATURES + LAP_TIME_CATEGORICALS
 
 # Flags used only to build the "stable regime" evaluation slice below — not
 # used as model features, since they describe the *next* lap and would be
@@ -118,6 +131,7 @@ def prepare_dataset() -> pd.DataFrame:
     for col in BOOLEAN_FEATURES:
         df[col] = df[col].astype(int)
     df = apply_categorical_dtypes(df, CATEGORICAL_COLUMNS)
+    df = add_circuit_geometry(df)
     return df
 
 
@@ -157,7 +171,7 @@ def train_lightgbm(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame) -
         train[TARGET],
         eval_set=[(val[FEATURE_COLUMNS], val[TARGET])],
         eval_metric="rmse",
-        categorical_feature=CATEGORICAL_COLUMNS,
+        categorical_feature=LAP_TIME_CATEGORICALS,
         callbacks=[lgb.early_stopping(50, verbose=False)],
     )
     val_pred = model.predict(val[FEATURE_COLUMNS])
@@ -220,11 +234,11 @@ def train_xgboost(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame) ->
 
 def train_catboost(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame) -> dict:
     # CatBoost wants its categorical columns as strings, not pandas `category` dtype.
-    cat_idx = [FEATURE_COLUMNS.index(c) for c in CATEGORICAL_COLUMNS]
+    cat_idx = [FEATURE_COLUMNS.index(c) for c in LAP_TIME_CATEGORICALS]
 
     def as_catboost(frame: pd.DataFrame) -> pd.DataFrame:
         frame = frame[FEATURE_COLUMNS].copy()
-        for col in CATEGORICAL_COLUMNS:
+        for col in LAP_TIME_CATEGORICALS:
             frame[col] = frame[col].astype(str)
         return frame
 
