@@ -171,3 +171,112 @@ class SimulateResponse(BaseModel):
     expected_points: float
     risk_score: float
     finish_distribution: dict[int, float]
+
+
+class Team(BaseModel):
+    team_id: str
+    name: str
+    season: int
+
+
+class EstimatePoint(BaseModel):
+    race_id: str
+    value: float | None
+    ci95: list[float] | None
+    n: int
+
+
+class CarCharacteristic(BaseModel):
+    key: str
+    label: str
+    unit: str
+    kind: str  # "mean" or "correlation"
+    better: str | None  # "lower" / "higher" / None when neither end is better
+    description: str
+    value: float | None
+    ci95: list[float] | None
+    n: int
+    field_mean: float | None
+    field_min: float | None
+    field_max: float | None
+    rank: int | None
+    teams_ranked: int
+    trajectory: list[EstimatePoint]
+
+
+class TyreWindowPoint(BaseModel):
+    race_id: str
+    race_name: str
+    track_temp: float | None
+    circuit_baseline_track_temp: float | None
+    degradation_vs_field: float | None
+
+
+class CarProfileResponse(BaseModel):
+    """PRD Section 13.2's Car Profile View — see car_profiles/season_profile.py.
+    Every completed race of the season is included, unlike
+    gold.car_profiles' pre-race rows that the models use."""
+
+    team_id: str
+    season: int
+    races_observed: int
+    last_race_id: str
+    min_races_for_confidence: int
+    characteristics: list[CarCharacteristic]
+    tyre_window: list[TyreWindowPoint]
+    # Always null today: PRD 8.1's Layer 2 priors aren't ingested.
+    seeded_priors: dict | None
+    seeded_priors_note: str
+
+
+class CurvePoint(BaseModel):
+    tyre_age: int
+    median_delta_s: float
+    p25_delta_s: float
+    p75_delta_s: float
+    laps: int
+
+
+class RaceWear(BaseModel):
+    race_id: str
+    track_temp: float
+    wear_s_per_lap: float
+    laps: int
+
+
+class CompoundReport(BaseModel):
+    compound: str
+    stints: int
+    wear_s_per_lap: float | None
+    wear_ci95: list[float] | None
+    field_wear_s_per_lap: float | None
+    curve: list[CurvePoint]
+    field_curve: list[CurvePoint]
+    by_race: list[RaceWear]
+
+
+class RemainingLifeLap(BaseModel):
+    driver_id: str
+    lap_number: int
+    stint_number: int
+    compound: str
+    tyre_age: int
+    predicted_remaining: float
+    actual_remaining: int
+
+
+class RemainingLifeTrace(BaseModel):
+    race_id: str
+    laps: list[RemainingLifeLap]
+
+
+class TyreReport(BaseModel):
+    """PRD Section 13.2's Tyre View — fuel-corrected, see
+    car_profiles/degradation_curves.py — plus the Tyre Degradation model's
+    remaining-life predictions over the team's latest race."""
+
+    team_id: str
+    season: int
+    fuel_track_seconds_per_lap: float
+    compounds: list[CompoundReport]
+    remaining_life: RemainingLifeTrace | None

@@ -4,12 +4,10 @@
  * motion, no scroll choreography, everything above the fold and legible
  * at a glance.
  *
- * PRD 13.2 names seven views. Three are built here (Race, Strategy
- * Simulation, Circuit); the other four are listed in the nav as
- * unavailable, with the specific missing backend named, rather than
+ * PRD 13.2 names seven views. Five are built here (Race, Strategy
+ * Simulation, Circuit, Car Profile, Tyre); the rest are listed in the nav
+ * as unavailable, with the specific missing backend named, rather than
  * silently omitted or stubbed with fake panels:
- *   - Car Profile needs car_profiles/ and GET /teams/{id}/car-profile
- *   - Tyre needs the same team-specific degradation curves
  *   - Driver needs a per-driver history endpoint
  *   - Model Performance needs monitoring/ exposed over the API (it exists
  *     as a CLI report today, not an endpoint)
@@ -18,9 +16,11 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { EdgeBezel, HeaderStripe } from "../design/chrome";
 import { C, F } from "../design/tokens";
+import { CarProfileView } from "./views/CarProfileView";
 import { CircuitView } from "./views/CircuitView";
 import { RaceView } from "./views/RaceView";
 import { SimulationView } from "./views/SimulationView";
+import { TyreView } from "./views/TyreView";
 
 type NavItem = { to: string; label: string; disabled?: string };
 
@@ -28,8 +28,8 @@ const NAV: NavItem[] = [
   { to: "/pitwall/race", label: "Race" },
   { to: "/pitwall/simulation", label: "Strategy Sim" },
   { to: "/pitwall/circuit", label: "Circuit" },
-  { to: "/pitwall/car-profile", label: "Car Profile", disabled: "needs car_profiles/" },
-  { to: "/pitwall/tyre", label: "Tyre", disabled: "needs car_profiles/" },
+  { to: "/pitwall/car-profile", label: "Car Profile" },
+  { to: "/pitwall/tyre", label: "Tyre" },
   { to: "/pitwall/driver", label: "Driver", disabled: "needs a driver-history endpoint" },
   { to: "/pitwall/models", label: "Model Perf", disabled: "monitoring/ is CLI-only today" },
 ];
@@ -141,6 +141,8 @@ export function PitWall() {
           <Route path="race" element={<RaceView />} />
           <Route path="simulation" element={<SimulationView />} />
           <Route path="circuit" element={<CircuitView />} />
+          <Route path="car-profile" element={<CarProfileView />} />
+          <Route path="tyre" element={<TyreView />} />
           <Route path="*" element={<Navigate to="/pitwall/race" replace />} />
         </Routes>
       </main>

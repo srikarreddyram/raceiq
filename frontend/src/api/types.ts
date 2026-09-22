@@ -141,3 +141,78 @@ export type SimulationOutcome = {
 };
 
 export type PitPlan = [number, string][];
+
+export type Team = { team_id: string; name: string; season: number };
+
+export type EstimatePoint = { race_id: string; value: number | null; ci95: [number, number] | null; n: number };
+
+export type CarCharacteristic = {
+  key: string;
+  label: string;
+  unit: string;
+  kind: "mean" | "correlation";
+  better: "lower" | "higher" | null;
+  description: string;
+  value: number | null;
+  ci95: [number, number] | null;
+  n: number;
+  field_mean: number | null;
+  field_min: number | null;
+  field_max: number | null;
+  rank: number | null;
+  teams_ranked: number;
+  trajectory: EstimatePoint[];
+};
+
+export type TyreWindowPoint = {
+  race_id: string;
+  race_name: string;
+  track_temp: number | null;
+  circuit_baseline_track_temp: number | null;
+  degradation_vs_field: number | null;
+};
+
+/** GET /teams/{id}/car-profile — every completed race of the season included. */
+export type CarProfile = {
+  team_id: string;
+  season: number;
+  races_observed: number;
+  last_race_id: string;
+  min_races_for_confidence: number;
+  characteristics: CarCharacteristic[];
+  tyre_window: TyreWindowPoint[];
+  seeded_priors: Record<string, unknown> | null;
+  seeded_priors_note: string;
+};
+
+export type CurvePoint = { tyre_age: number; median_delta_s: number; p25_delta_s: number; p75_delta_s: number; laps: number };
+
+export type CompoundReport = {
+  compound: "SOFT" | "MEDIUM" | "HARD";
+  stints: number;
+  wear_s_per_lap: number | null;
+  wear_ci95: [number, number] | null;
+  field_wear_s_per_lap: number | null;
+  curve: CurvePoint[];
+  field_curve: CurvePoint[];
+  by_race: { race_id: string; track_temp: number; wear_s_per_lap: number; laps: number }[];
+};
+
+export type RemainingLifeLap = {
+  driver_id: string;
+  lap_number: number;
+  stint_number: number;
+  compound: string;
+  tyre_age: number;
+  predicted_remaining: number;
+  actual_remaining: number;
+};
+
+/** GET /teams/{id}/tyres — fuel-corrected wear, see car_profiles/degradation_curves.py. */
+export type TyreReport = {
+  team_id: string;
+  season: number;
+  fuel_track_seconds_per_lap: number;
+  compounds: CompoundReport[];
+  remaining_life: { race_id: string; laps: RemainingLifeLap[] } | null;
+};

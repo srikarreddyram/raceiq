@@ -52,8 +52,14 @@ logger = logging.getLogger(__name__)
 # suppressed — consumers decide.
 MIN_RACES_FOR_CONFIDENCE = 3
 
-_SQL = """
-CREATE OR REPLACE TABLE gold.car_profiles AS
+# Two statements. The first materialises one raw observation per (race,
+# team) — what this race alone said about the car. The second averages
+# those over prior races into the profile. The observations are kept as a
+# table, not just a CTE, because a profile value is a mean over a handful
+# of races and the dashboard's confidence intervals need the spread behind
+# that mean, not only the mean itself.
+_OBSERVATIONS_SQL = """
+CREATE OR REPLACE TABLE gold.car_race_observations AS
 WITH green AS (
     -- Every pace measurement below is restricted to representative racing
     -- laps. A pit lap includes pit-lane transit, and a lap under safety
@@ -214,6 +220,12 @@ observations AS (
     LEFT JOIN race_team_restart rtr ON rtr.race_id = rt.race_id AND rtr.team_id = rt.team_id
     LEFT JOIN race_team_undercut rtu ON rtu.race_id = rt.race_id AND rtu.team_id = rt.team_id
 )
+SELECT * FROM observations
+"""
+
+_SQL = """
+CREATE OR REPLACE TABLE gold.car_profiles AS
+WITH observations AS (SELECT * FROM gold.car_race_observations)
 SELECT
     this.race_id,
     this.season,
@@ -262,6 +274,7 @@ GROUP BY this.race_id, this.season, this.team_id
 
 
 def build(con: duckdb.DuckDBPyConnection) -> None:
+    con.execute(_OBSERVATIONS_SQL)
     con.execute(_SQL)
     count = con.execute("SELECT COUNT(*) FROM gold.car_profiles").fetchone()[0]
     usable = con.execute(

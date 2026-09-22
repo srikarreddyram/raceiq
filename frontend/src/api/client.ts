@@ -14,6 +14,7 @@
  */
 
 import type {
+  CarProfile,
   Circuit,
   CircuitMap,
   CircuitProfile,
@@ -23,6 +24,8 @@ import type {
   Race,
   SimulationOutcome,
   StrategyRecommendation,
+  Team,
+  TyreReport,
 } from "./types";
 
 const BASE_URL = import.meta.env.VITE_RACEIQ_API ?? "http://127.0.0.1:8000";
@@ -66,6 +69,11 @@ export const api = {
   circuits: () => request<Circuit[]>("/circuits"),
   circuitProfile: (circuitId: string) => request<CircuitProfile>(`/circuits/${circuitId}/profile`),
   circuitMap: (circuitId: string) => request<CircuitMap>(`/circuits/${circuitId}/map`),
+
+  teams: (season?: number) => request<Team[]>(`/teams${season ? `?season=${season}` : ""}`),
+  carProfile: (teamId: string, season: number) =>
+    request<CarProfile>(`/teams/${teamId}/car-profile?season=${season}`),
+  tyres: (teamId: string, season: number) => request<TyreReport>(`/teams/${teamId}/tyres?season=${season}`),
 
   drivers: (season?: number) => request<Driver[]>(`/drivers${season ? `?season=${season}` : ""}`),
   races: (season?: number) => request<Race[]>(`/races${season ? `?season=${season}` : ""}`),
