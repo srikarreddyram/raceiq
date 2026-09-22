@@ -11,7 +11,8 @@
 
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { EdgeBezel, HeaderStripe } from "../design/chrome";
-import { C, F } from "../design/tokens";
+import { DEFAULT_ACCENT } from "../design/theme";
+import { C, DISPLAY, F } from "../design/tokens";
 import { CarProfileView } from "./views/CarProfileView";
 import { CircuitView } from "./views/CircuitView";
 import { DriverView } from "./views/DriverView";
@@ -20,7 +21,7 @@ import { RaceView } from "./views/RaceView";
 import { SimulationView } from "./views/SimulationView";
 import { TyreView } from "./views/TyreView";
 
-type NavItem = { to: string; label: string; disabled?: string };
+type NavItem = { to: string; label: string };
 
 const NAV: NavItem[] = [
   { to: "/pitwall/race", label: "Race" },
@@ -32,6 +33,12 @@ const NAV: NavItem[] = [
   { to: "/pitwall/models", label: "Model Perf" },
 ];
 
+// Text on the red bar is white by construction — these are the only
+// literals in the Pit Wall, and they belong to the bar, not the theme.
+const ON_BAR = "#FFFFFF";
+const ON_BAR_DIM = "rgba(255,255,255,0.78)";
+
+/** The F1 app's red header: logo, section name, and the seven views. */
 function TopBar() {
   return (
     <header
@@ -39,18 +46,17 @@ function TopBar() {
         position: "sticky",
         top: 0,
         zIndex: 30,
-        background: "rgba(10,10,15,0.92)",
-        backdropFilter: "blur(10px)",
-        borderBottom: `1px solid ${C.edge}`,
+        background: DEFAULT_ACCENT,
+        boxShadow: "0 2px 10px rgba(21,21,30,0.18)",
       }}
     >
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 30,
+          gap: 28,
           padding: "0 20px",
-          height: 58,
+          height: 60,
           maxWidth: 1680,
           margin: "0 auto",
         }}
@@ -58,72 +64,59 @@ function TopBar() {
         <NavLink
           to="/"
           style={{
-            fontFamily: F.display,
-            fontSize: 22,
-            letterSpacing: "0.1em",
-            color: C.text,
+            ...DISPLAY,
+            fontStyle: "italic",
+            fontSize: 24,
+            color: ON_BAR,
             textDecoration: "none",
             whiteSpace: "nowrap",
           }}
         >
-          RACE<span style={{ color: C.gold }}>IQ</span>
+          RACE<span style={{ fontWeight: 400 }}>IQ</span>
         </NavLink>
 
         <div
           style={{
             fontFamily: F.mono,
-            fontSize: 8.5,
-            letterSpacing: "0.3em",
-            color: C.faint,
+            fontWeight: 700,
+            fontSize: 11,
+            letterSpacing: "0.14em",
+            color: ON_BAR_DIM,
             whiteSpace: "nowrap",
+            borderLeft: `1px solid ${ON_BAR_DIM}`,
+            paddingLeft: 14,
           }}
         >
           PIT WALL
         </div>
 
-        <nav style={{ display: "flex", gap: 2, overflowX: "auto", flex: 1 }}>
-          {NAV.map((item) =>
-            item.disabled ? (
-              <span
-                key={item.to}
-                title={`Not built — ${item.disabled}`}
-                style={{
-                  fontFamily: F.mono,
-                  fontSize: 10,
-                  letterSpacing: "0.16em",
-                  textTransform: "uppercase",
-                  color: "rgba(240,240,240,0.22)",
-                  padding: "9px 13px",
-                  whiteSpace: "nowrap",
-                  cursor: "not-allowed",
-                }}
-              >
-                {item.label}
-              </span>
-            ) : (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                style={({ isActive }) => ({
-                  fontFamily: F.mono,
-                  fontSize: 10,
-                  letterSpacing: "0.16em",
-                  textTransform: "uppercase",
-                  color: isActive ? C.gold : C.dim,
-                  textDecoration: "none",
-                  padding: "9px 13px",
-                  borderBottom: `2px solid ${isActive ? C.gold : "transparent"}`,
-                  whiteSpace: "nowrap",
-                  transition: "color 200ms",
-                })}
-              >
-                {item.label}
-              </NavLink>
-            ),
-          )}
+        <nav style={{ display: "flex", gap: 4, overflowX: "auto", flex: 1, alignSelf: "stretch" }}>
+          {NAV.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              style={({ isActive }) => ({
+                display: "flex",
+                alignItems: "center",
+                fontFamily: F.mono,
+                fontWeight: isActive ? 700 : 600,
+                fontSize: 13,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                color: isActive ? ON_BAR : ON_BAR_DIM,
+                textDecoration: "none",
+                padding: "0 13px",
+                borderBottom: `3px solid ${isActive ? ON_BAR : "transparent"}`,
+                whiteSpace: "nowrap",
+                transition: "color 200ms",
+              })}
+            >
+              {item.label}
+            </NavLink>
+          ))}
         </nav>
       </div>
-      <HeaderStripe bottom={-5} />
+      <HeaderStripe bottom={-4} />
     </header>
   );
 }

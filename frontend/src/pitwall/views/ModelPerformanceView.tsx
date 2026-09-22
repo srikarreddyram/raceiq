@@ -32,7 +32,7 @@ import { api } from "../../api/client";
 import type { ModelHealth } from "../../api/types";
 import { useAsync } from "../../api/useAsync";
 import { Card, EmptyState, ErrorState, SectionLabel, TableSkeleton } from "../../design/primitives";
-import { C, F, NUM } from "../../design/tokens";
+import { C, DISPLAY, F, NUM } from "../../design/tokens";
 import { ACCENT, AXIS_LINE, AXIS_TICK, GRID_STROKE, TOOLTIP_STYLE } from "../components/chartStyle";
 
 const METRIC_LABELS: Record<string, string> = {
@@ -81,8 +81,8 @@ function ModelCard({ m, active, onSelect }: { m: ModelHealth; active: boolean; o
       onClick={onSelect}
       style={{
         textAlign: "left",
-        background: active ? "rgba(201,168,76,0.07)" : C.surface,
-        border: `1px solid ${active ? C.gold : C.edge}`,
+        background: active ? C.hover : C.surface,
+        border: `1px solid ${active ? C.accent : C.edge}`,
         borderRadius: 6,
         padding: "16px 18px",
         cursor: "pointer",
@@ -90,7 +90,7 @@ function ModelCard({ m, active, onSelect }: { m: ModelHealth; active: boolean; o
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-        <div style={{ fontFamily: F.display, fontSize: 21, letterSpacing: "0.03em", color: C.text }}>{m.label}</div>
+        <div style={{ ...DISPLAY, fontSize: 17, color: C.text }}>{m.label}</div>
         <StatusBadge status={m.status} />
       </div>
       <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 5 }}>
@@ -170,13 +170,13 @@ function Drift({ m }: { m: ModelHealth }) {
               <span style={{ fontFamily: F.mono, fontSize: 10.5, color: d.drifted ? C.text : C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {d.feature}
               </span>
-              <div style={{ position: "relative", height: 10, background: "rgba(255,255,255,0.04)", borderRadius: 5 }}>
+              <div style={{ position: "relative", height: 10, background: C.fill, borderRadius: 5 }}>
                 <div
                   style={{
                     position: "absolute",
                     inset: 0,
                     width: `${(d.psi / max) * 100}%`,
-                    background: d.drifted ? ACCENT : "rgba(255,255,255,0.18)",
+                    background: d.drifted ? ACCENT : C.line,
                     borderRadius: 5,
                   }}
                 />
@@ -343,7 +343,7 @@ export function ModelPerformanceView() {
   return (
     <div>
       <SectionLabel>Model performance</SectionLabel>
-      <h1 style={{ fontFamily: F.display, fontSize: 34, margin: "8px 0 8px", letterSpacing: "0.02em" }}>
+      <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 8px", letterSpacing: "0.02em" }}>
         How the models are holding up in 2026
       </h1>
       <div style={{ fontFamily: F.mono, fontSize: 10, letterSpacing: "0.14em", color: C.faint, marginBottom: 20 }}>

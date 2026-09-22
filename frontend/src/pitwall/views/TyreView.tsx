@@ -29,10 +29,11 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../../api/client";
+import { accentVars, teamAccent } from "../../design/theme";
 import type { CompoundReport, TyreReport } from "../../api/types";
 import { useAsync } from "../../api/useAsync";
 import { Card, EmptyState, ErrorState, SectionLabel, Segmented, Stat, TableSkeleton } from "../../design/primitives";
-import { C, F, NUM, compoundColor } from "../../design/tokens";
+import { C, DISPLAY, F, NUM, compoundColor } from "../../design/tokens";
 import { AXIS_LINE, AXIS_TICK, GRID_STROKE, TOOLTIP_STYLE } from "../components/chartStyle";
 import { TeamPicker, useTeamSelection } from "../components/TeamPicker";
 
@@ -47,7 +48,7 @@ function CompoundCard({ c }: { c: CompoundReport }) {
   return (
     <Card accent={colour} style={{ padding: "18px 20px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <div style={{ fontFamily: F.display, fontSize: 24, letterSpacing: "0.04em", color: C.text }}>{c.compound}</div>
+        <div style={{ ...DISPLAY, fontSize: 24, letterSpacing: "0.04em", color: C.text }}>{c.compound}</div>
         <div style={{ fontFamily: F.mono, fontSize: 9, letterSpacing: "0.14em", color: C.faint }}>{c.stints} STINTS</div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 14 }}>
@@ -124,7 +125,7 @@ function DegradationCurves({ report }: { report: TyreReport }) {
               label={{ value: "TYRE AGE (LAPS)", position: "insideBottomRight", offset: -2, fill: C.faint, fontSize: 9, fontFamily: F.mono }}
             />
             <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={48} tickFormatter={(v: number) => v.toFixed(1)} />
-            <ReferenceLine y={0} stroke="rgba(255,255,255,0.14)" />
+            <ReferenceLine y={0} stroke={C.line} />
             <Tooltip
               contentStyle={TOOLTIP_STYLE}
               labelFormatter={(age) => `Tyre age ${age}`}
@@ -146,7 +147,7 @@ function DegradationCurves({ report }: { report: TyreReport }) {
                   const last = rows.map((r) => r[c.compound] != null).lastIndexOf(true);
                   if (props.index !== last || props.x == null || props.y == null) return <g />;
                   return (
-                    <text x={props.x + 6} y={props.y + 3} fill={C.dim} fontSize={9} fontFamily="JetBrains Mono, monospace">
+                    <text x={props.x + 6} y={props.y + 3} fill={C.dim} fontSize={9} fontFamily={F.mono}>
                       {c.compound[0]}
                     </text>
                   );
@@ -211,10 +212,10 @@ function OperatingWindow({ report }: { report: TyreReport }) {
               width={48}
               tickFormatter={(v: number) => v.toFixed(2)}
             />
-            <ReferenceLine y={0} stroke="rgba(255,255,255,0.14)" />
+            <ReferenceLine y={0} stroke={C.line} />
             <Tooltip
               contentStyle={TOOLTIP_STYLE}
-              cursor={{ stroke: "rgba(255,255,255,0.1)" }}
+              cursor={{ stroke: C.line }}
               content={({ payload }) => {
                 const p = payload?.[0]?.payload;
                 if (!p) return null;
@@ -280,7 +281,7 @@ function RemainingLife({ report }: { report: TyreReport }) {
         )}
       </div>
       <div style={{ fontFamily: F.body, fontSize: 12, color: C.muted, marginBottom: 14, lineHeight: 1.6 }}>
-        The promoted Tyre Degradation model's estimate of laps left on the current set, lap by lap (gold), against
+        The promoted Tyre Degradation model's estimate of laps left on the current set, lap by lap (team colour), against
         how many laps that stint actually ran on (grey). For a final stint "actual" is laps to the flag, and for a
         retirement laps to the retirement — neither is laps the tyre could still have given.
         {mae != null && (
@@ -302,7 +303,7 @@ function RemainingLife({ report }: { report: TyreReport }) {
           />
           <Legend wrapperStyle={{ fontFamily: F.mono, fontSize: 10, letterSpacing: "0.1em" }} />
           <Line dataKey="actual_remaining" name="Actual" stroke={C.muted} strokeWidth={2} dot={false} isAnimationActive={false} />
-          <Line dataKey="predicted_remaining" name="Predicted" stroke="#C9A84C" strokeWidth={2} dot={false} isAnimationActive={false} />
+          <Line dataKey="predicted_remaining" name="Predicted" stroke={C.accent} strokeWidth={2} dot={false} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </Card>
@@ -314,10 +315,11 @@ export function TyreView() {
   const report = useAsync(() => api.tyres(team.teamId, team.season), [team.teamId, team.season, team.ready], team.ready);
   const data = report.data;
 
+  // Team-scoped: the whole view takes the team's colour (compound colours stay Pirelli's).
   return (
-    <div>
+    <div style={accentVars(teamAccent(team.teamId))}>
       <SectionLabel>Tyre view</SectionLabel>
-      <h1 style={{ fontFamily: F.display, fontSize: 34, margin: "8px 0 20px", letterSpacing: "0.02em" }}>
+      <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 20px", letterSpacing: "0.02em" }}>
         Degradation, compound by compound
       </h1>
 

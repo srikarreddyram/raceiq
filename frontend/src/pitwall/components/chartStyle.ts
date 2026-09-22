@@ -1,19 +1,24 @@
 /**
  * Recharts styling shared by every Pit Wall chart, so axes, grids and
- * tooltips stay recessive and identical across views. Recharts takes raw
- * colour strings in SVG attributes, so these are the literal token values
- * rather than CSS variables.
+ * tooltips stay recessive and identical across views.
+ *
+ * ACCENT is the CSS variable, not a hex: SVG presentation attributes
+ * resolve `var(--rq-accent)`, so a chart inside a team-themed subtree
+ * (theme.ts's accentVars) draws in that team's colour with no prop drilling.
  */
 
-export const AXIS_TICK = { fill: "rgba(240,240,240,0.38)", fontSize: 10, fontFamily: "'JetBrains Mono', monospace" };
-export const AXIS_LINE = { stroke: "rgba(255,255,255,0.08)" };
-export const GRID_STROKE = "rgba(255,255,255,0.04)";
-export const ACCENT = "#C9A84C";
+import { C, F } from "../../design/tokens";
+
+export const AXIS_TICK = { fill: C.faint, fontSize: 11, fontFamily: F.mono, fontWeight: 600 };
+export const AXIS_LINE = { stroke: C.edge };
+export const GRID_STROKE = C.rule;
+export const ACCENT = "var(--rq-accent)";
 export const TOOLTIP_STYLE = {
-  background: "#16161f",
-  border: "1px solid rgba(255,255,255,0.08)",
-  borderRadius: 4,
-  fontFamily: "'JetBrains Mono', monospace",
-  fontSize: 11,
-  color: "#F0F0F0",
+  background: C.surface,
+  border: `1px solid ${C.edge}`,
+  borderRadius: 6,
+  boxShadow: "0 4px 16px rgba(21,21,30,0.12)",
+  fontFamily: F.body,
+  fontSize: 12,
+  color: C.text,
 };

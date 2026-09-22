@@ -5,7 +5,7 @@
  *
  * Each characteristic is one row of a forest plot, on its own scale
  * (units differ row to row): the grey band is the spread of the whole grid,
- * the tick is the grid mean, and the gold dot and whisker are this car and
+ * the tick is the grid mean, and the team-coloured dot and whisker are this car and
  * its 95% interval. A whisker that spans most of the band means the data
  * can't yet tell this car apart from the field — early in a season, that
  * is most of them, and the view says so instead of ranking noise.
@@ -29,10 +29,11 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../../api/client";
+import { accentVars, teamAccent } from "../../design/theme";
 import type { CarCharacteristic, CarProfile } from "../../api/types";
 import { useAsync } from "../../api/useAsync";
 import { Card, EmptyState, ErrorState, SectionLabel, Stat, TableSkeleton } from "../../design/primitives";
-import { C, F, NUM } from "../../design/tokens";
+import { C, DISPLAY, F, NUM } from "../../design/tokens";
 import { ACCENT, AXIS_LINE, AXIS_TICK, GRID_STROKE, TOOLTIP_STYLE } from "../components/chartStyle";
 import { TeamPicker, useTeamSelection } from "../components/TeamPicker";
 
@@ -77,9 +78,9 @@ function ForestRow({
         gap: 16,
         width: "100%",
         padding: "12px 14px",
-        background: active ? "rgba(201,168,76,0.07)" : hover ? "rgba(255,255,255,0.02)" : "transparent",
+        background: active ? C.hover : hover ? C.fill : "transparent",
         border: "none",
-        borderLeft: `2px solid ${active ? C.gold : "transparent"}`,
+        borderLeft: `2px solid ${active ? C.accent : "transparent"}`,
         borderBottom: `1px solid ${C.rule}`,
         cursor: "pointer",
         textAlign: "left",
@@ -101,10 +102,10 @@ function ForestRow({
             width={Math.max(x(c.field_max) - x(c.field_min), 2)}
             height={8}
             rx={4}
-            fill="rgba(255,255,255,0.07)"
+            fill={C.fill}
           />
         )}
-        <line x1={x(0)} x2={x(0)} y1={4} y2={24} stroke="rgba(255,255,255,0.12)" strokeDasharray="2 3" />
+        <line x1={x(0)} x2={x(0)} y1={4} y2={24} stroke={C.line} strokeDasharray="2 3" />
         {c.field_mean != null && (
           <line x1={x(c.field_mean)} x2={x(c.field_mean)} y1={6} y2={22} stroke={C.muted} strokeWidth={2} />
         )}
@@ -257,10 +258,10 @@ function TyreWindow({ profile }: { profile: CarProfile }) {
               width={52}
               tickFormatter={(v: number) => v.toFixed(1)}
             />
-            <ReferenceLine y={0} stroke="rgba(255,255,255,0.18)" strokeDasharray="4 4" />
+            <ReferenceLine y={0} stroke={C.line} strokeDasharray="4 4" />
             <Tooltip
               contentStyle={TOOLTIP_STYLE}
-              cursor={{ stroke: "rgba(255,255,255,0.1)" }}
+              cursor={{ stroke: C.line }}
               content={({ payload }) => {
                 const p = payload?.[0]?.payload;
                 if (!p) return null;
@@ -297,10 +298,11 @@ export function CarProfileView() {
   const selected = data?.characteristics.find((c) => c.key === selectedKey) ?? data?.characteristics[0];
   const distinctCount = data?.characteristics.filter(isDistinct).length ?? 0;
 
+  // Team-scoped, so the whole view wears the team's colour — the F1 app's team pages do the same.
   return (
-    <div>
+    <div style={accentVars(teamAccent(team.teamId))}>
       <SectionLabel>Car profile</SectionLabel>
-      <h1 style={{ fontFamily: F.display, fontSize: 34, margin: "8px 0 20px", letterSpacing: "0.02em" }}>
+      <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 20px", letterSpacing: "0.02em" }}>
         What the data says about the car
       </h1>
 
@@ -311,9 +313,9 @@ export function CarProfileView() {
 
       {data && !profile.loading && (
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <Card accent={C.gold} style={{ padding: "22px 26px" }}>
+          <Card accent={C.accent} style={{ padding: "22px 26px" }}>
             <SectionLabel>{data.season} season</SectionLabel>
-            <h2 style={{ fontFamily: F.display, fontSize: 40, margin: "10px 0 18px", letterSpacing: "0.02em" }}>
+            <h2 style={{ ...DISPLAY, fontSize: 40, margin: "10px 0 18px", letterSpacing: "0.02em" }}>
               {team.teamName}
             </h2>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 24 }}>
@@ -322,7 +324,7 @@ export function CarProfileView() {
               <Stat
                 label="Distinct from field"
                 value={`${distinctCount} / ${data.characteristics.length}`}
-                color={C.gold}
+                color={C.accent}
                 size={26}
               />
             </div>
@@ -354,7 +356,7 @@ export function CarProfileView() {
                     <span style={{ width: 2, height: 10, background: C.muted }} /> GRID MEAN
                   </span>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                    <span style={{ width: 14, height: 6, borderRadius: 3, background: "rgba(255,255,255,0.12)" }} /> GRID RANGE
+                    <span style={{ width: 14, height: 6, borderRadius: 3, background: C.line }} /> GRID RANGE
                   </span>
                 </div>
               </div>

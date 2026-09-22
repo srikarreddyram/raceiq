@@ -4,10 +4,11 @@
  * coherent product instead of a pile of independently-styled screens.
  */
 
+import { C } from "./tokens";
 import { DEFAULT_ACCENT } from "./theme";
 
-const BRAND_PRIMARY = DEFAULT_ACCENT; // gold, PRD 13.1's named accent
-const BRAND_SECONDARY = "#E10600"; // racing red
+const BRAND_PRIMARY = DEFAULT_ACCENT; // F1 red
+const BRAND_SECONDARY = C.carbon; // F1 carbon black
 
 /**
  * A persistent colour frame down both edges of the viewport — fixed
@@ -27,7 +28,7 @@ export function EdgeBezel() {
           bottom: 0,
           width: 4,
           background: BRAND_PRIMARY,
-          opacity: 0.55,
+          opacity: 0.9,
           zIndex: 40,
           pointerEvents: "none",
         }}
@@ -41,7 +42,7 @@ export function EdgeBezel() {
           bottom: 0,
           width: 4,
           background: BRAND_SECONDARY,
-          opacity: 0.55,
+          opacity: 0.9,
           zIndex: 40,
           pointerEvents: "none",
         }}
@@ -62,14 +63,14 @@ export function DefaultWash() {
         style={{
           position: "absolute",
           inset: 0,
-          background: `radial-gradient(65% 55% at 8% 0%, ${BRAND_PRIMARY}2E 0%, transparent 62%)`,
+          background: `radial-gradient(65% 55% at 8% 0%, ${BRAND_PRIMARY}14 0%, transparent 62%)`,
         }}
       />
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background: `radial-gradient(65% 55% at 92% 0%, ${BRAND_SECONDARY}38 0%, transparent 62%)`,
+          background: `radial-gradient(65% 55% at 92% 0%, ${BRAND_SECONDARY}0D 0%, transparent 62%)`,
         }}
       />
     </div>
@@ -81,11 +82,11 @@ export function HeaderStripe({ bottom = 0 }: { bottom?: number | string }) {
   return (
     <div
       aria-hidden
-      style={{ position: "absolute", left: 0, right: 0, bottom, height: 5, display: "flex" }}
+      style={{ position: "absolute", left: 0, right: 0, bottom, height: 4, display: "flex" }}
     >
+      <div style={{ flex: 3, background: BRAND_SECONDARY }} />
+      <div style={{ flex: 1, background: C.surface }} />
       <div style={{ flex: 1, background: BRAND_PRIMARY }} />
-      <div style={{ flex: 1, background: "#F0F0F0" }} />
-      <div style={{ flex: 1, background: BRAND_SECONDARY }} />
     </div>
   );
 }

@@ -25,14 +25,15 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../../api/client";
+import { accentVars, teamAccent } from "../../design/theme";
 import type { DriverProfile, DriverRaceResult } from "../../api/types";
 import { useAsync } from "../../api/useAsync";
 import { Card, EmptyState, ErrorState, SectionLabel, Segmented, Stat, TableSkeleton } from "../../design/primitives";
-import { C, F, NUM } from "../../design/tokens";
+import { C, DISPLAY, F, NUM } from "../../design/tokens";
 import { ACCENT, AXIS_LINE, AXIS_TICK, GRID_STROKE, TOOLTIP_STYLE } from "../components/chartStyle";
 
 const SEASONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018];
-const SLOWER = "#5b6477"; // neutral pole of the teammate-gap diverging pair; gold is "faster"
+const SLOWER = C.inactive; // neutral pole of the teammate-gap diverging pair; the team colour is "faster"
 
 const gap = (v: number | null | undefined) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(3)}s`);
 const pos = (v: number | null | undefined) => (v == null ? "—" : `P${v}`);
@@ -68,7 +69,7 @@ function RaceStrip({ races }: { races: DriverRaceResult[] }) {
         {[1, 5, 10, 15, 20].filter((p) => p <= maxPos).map((p) => (
           <g key={p}>
             <line x1={padX} x2={W - padX} y1={y(p)} y2={y(p)} stroke={GRID_STROKE} />
-            <text x={padX - 8} y={y(p) + 3} textAnchor="end" fill="rgba(240,240,240,0.38)" fontSize={10} fontFamily="JetBrains Mono, monospace">
+            <text x={padX - 8} y={y(p) + 3} textAnchor="end" fill={C.faint} fontSize={10} fontFamily={F.mono}>
               P{p}
             </text>
           </g>
@@ -88,11 +89,11 @@ function RaceStrip({ races }: { races: DriverRaceResult[] }) {
               {r.classified && finishY != null ? (
                 <circle cx={cx} cy={finishY} r={5.5} fill={r.position! <= 3 ? ACCENT : C.text} stroke={C.surface} strokeWidth={2} />
               ) : (
-                <text x={cx} y={H - bottom + 2} textAnchor="middle" fill={C.red} fontSize={12} fontFamily="JetBrains Mono, monospace">
+                <text x={cx} y={H - bottom + 2} textAnchor="middle" fill={C.red} fontSize={12} fontFamily={F.mono}>
                   ×
                 </text>
               )}
-              <text x={cx} y={H - 6} textAnchor="middle" fill="rgba(240,240,240,0.38)" fontSize={9} fontFamily="JetBrains Mono, monospace">
+              <text x={cx} y={H - 6} textAnchor="middle" fill={C.faint} fontSize={9} fontFamily={F.mono}>
                 R{r.race_id.split("_")[1]}
               </text>
             </g>
@@ -142,10 +143,10 @@ function TeammateGaps({ races }: { races: DriverRaceResult[] }) {
         <CartesianGrid stroke={GRID_STROKE} vertical={false} />
         <XAxis dataKey="race" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} />
         <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={46} tickFormatter={(v: number) => v.toFixed(1)} />
-        <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" />
+        <ReferenceLine y={0} stroke={C.line} />
         <Tooltip
           contentStyle={TOOLTIP_STYLE}
-          cursor={{ fill: "rgba(255,255,255,0.04)" }}
+          cursor={{ fill: C.fill }}
           labelFormatter={(_, payload) => payload?.[0]?.payload?.name ?? ""}
           formatter={(value, _name, item) => [
             `${gap(Number(value))} vs ${pretty(item?.payload?.teammate)} (${item?.payload?.laps} laps)`,
@@ -220,7 +221,7 @@ function WetDry({ profile }: { profile: DriverProfile }) {
         const delta = s.wet_teammate_gap_s != null && s.dry_teammate_gap_s != null ? s.wet_teammate_gap_s - s.dry_teammate_gap_s : null;
         return (
           <div key={s.era} style={{ background: C.raised, border: `1px solid ${C.edge}`, borderRadius: 6, padding: "14px 16px" }}>
-            <div style={{ fontFamily: F.mono, fontSize: 10, letterSpacing: "0.2em", color: C.gold }}>{s.era} REGS</div>
+            <div style={{ fontFamily: F.mono, fontSize: 10, letterSpacing: "0.2em", color: C.accent }}>{s.era} REGS</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
               <Stat label="Dry vs teammate" value={gap(s.dry_teammate_gap_s)} size={20} />
               <Stat label="Wet vs teammate" value={gap(s.wet_teammate_gap_s)} size={20} color={s.wet_teammate_gap_s == null ? C.faint : undefined} />
@@ -261,10 +262,11 @@ export function DriverView() {
 
   const circuits = useMemo(() => (showAllCircuits ? data?.circuits : data?.circuits.slice(0, 10)) ?? [], [data, showAllCircuits]);
 
+  // Themed in the colour of the team the driver raced for most recently in the selected season.
   return (
-    <div>
+    <div style={accentVars(teamAccent(profile.data?.races[profile.data.races.length - 1]?.team_id ?? null))}>
       <SectionLabel>Driver view</SectionLabel>
-      <h1 style={{ fontFamily: F.display, fontSize: 34, margin: "8px 0 20px", letterSpacing: "0.02em" }}>
+      <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 20px", letterSpacing: "0.02em" }}>
         Driver against the only fair benchmark
       </h1>
 
@@ -304,11 +306,11 @@ export function DriverView() {
 
       {data && !profile.loading && (
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <Card accent={C.gold} style={{ padding: "22px 26px" }}>
+          <Card accent={C.accent} style={{ padding: "22px 26px" }}>
             <SectionLabel>
               {data.nationality} · {data.season} · {pretty(data.races[0]?.team_id)}
             </SectionLabel>
-            <h2 style={{ fontFamily: F.display, fontSize: 40, margin: "10px 0 18px", letterSpacing: "0.02em" }}>
+            <h2 style={{ ...DISPLAY, fontSize: 40, margin: "10px 0 18px", letterSpacing: "0.02em" }}>
               {data.given_name} {data.family_name}
               {data.code && <span style={{ color: C.faint, fontSize: 24, marginLeft: 14 }}>{data.code}</span>}
             </h2>
@@ -323,13 +325,13 @@ export function DriverView() {
                 label="Ahead of teammate"
                 value={`${data.summary.ahead_of_teammate}/${data.summary.head_to_head_races}`}
                 size={26}
-                color={C.gold}
+                color={C.accent}
               />
               <Stat
                 label="Pace vs teammate"
                 value={gap(data.summary.median_teammate_gap_s)}
                 size={22}
-                color={(data.summary.median_teammate_gap_s ?? 0) < 0 ? C.gold : undefined}
+                color={(data.summary.median_teammate_gap_s ?? 0) < 0 ? C.accent : undefined}
               />
             </div>
             <div style={{ fontFamily: F.body, fontSize: 11.5, color: C.faint, marginTop: 14 }}>
@@ -346,7 +348,7 @@ export function DriverView() {
             <Card style={{ padding: "20px 22px" }}>
               <SectionLabel style={{ marginBottom: 4 }}>Gap to teammate, per race</SectionLabel>
               <div style={{ fontFamily: F.body, fontSize: 12, color: C.muted, marginBottom: 12 }}>
-                Median lap-time gap on laps both drivers raced clean. Gold is faster; below zero is faster.
+                Median lap-time gap on laps both drivers raced clean. Team colour is faster; below zero is faster.
               </div>
               <TeammateGaps races={data.races} />
             </Card>

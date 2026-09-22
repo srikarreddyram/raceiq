@@ -15,7 +15,7 @@ import { C, F, NUM } from "../../design/tokens";
 
 const CLASS_COLOURS: Record<CornerNode["speed_class"], string> = {
   slow: C.red,
-  medium: "#D4B23C",
+  medium: C.amber,
   fast: C.green,
 };
 
@@ -55,9 +55,10 @@ export function TrackMap({ map }: { map: CircuitMap }) {
           role="img"
           aria-label={`Track map of ${map.circuit_id}`}
         >
-          {/* A wide dark underlay makes the thin line read as tarmac. */}
-          <path d={map.svg_path} fill="none" stroke={C.raised} strokeWidth={22} strokeLinejoin="round" />
-          <path d={map.svg_path} fill="none" stroke={C.text} strokeOpacity={0.85} strokeWidth={7} strokeLinejoin="round" />
+          {/* The F1 app's circuit drawing: a bold carbon line over a soft
+              grey run-off band. */}
+          <path d={map.svg_path} fill="none" stroke={C.fill} strokeWidth={26} strokeLinejoin="round" />
+          <path d={map.svg_path} fill="none" stroke={C.carbon} strokeWidth={8} strokeLinejoin="round" />
 
           {map.drs_zones?.map((zone, i) => (
             <path key={i} d={zone} fill="none" stroke={C.green} strokeWidth={9} strokeLinecap="round" opacity={0.9} />
@@ -65,8 +66,8 @@ export function TrackMap({ map }: { map: CircuitMap }) {
 
           {map.sector_boundaries.map(([x, y], i) => (
             <g key={i}>
-              <circle cx={x} cy={y} r={6} fill={C.bg} stroke={C.gold} strokeWidth={3} />
-              <text x={x + 12} y={y - 10} fill={C.gold} fontFamily="JetBrains Mono, monospace" fontSize={20}>
+              <circle cx={x} cy={y} r={7} fill={C.surface} stroke={C.accent} strokeWidth={3} />
+              <text x={x + 12} y={y - 10} fill={C.accent} fontFamily={F.mono} fontWeight={700} fontSize={22}>
                 S{i + 2}
               </text>
             </g>
@@ -88,7 +89,7 @@ export function TrackMap({ map }: { map: CircuitMap }) {
                   cy={corner.y}
                   r={active ? 19 : 14}
                   fill={CLASS_COLOURS[corner.speed_class]}
-                  stroke={C.bg}
+                  stroke={C.surface}
                   strokeWidth={3}
                   style={{ transition: "r 150ms" }}
                 />
@@ -96,9 +97,9 @@ export function TrackMap({ map }: { map: CircuitMap }) {
                   x={corner.x}
                   y={corner.y + 4}
                   textAnchor="middle"
-                  fill={C.bg}
-                  fontFamily="JetBrains Mono, monospace"
-                  fontSize={13}
+                  fill={C.surface}
+                  fontFamily={F.mono}
+                  fontSize={14}
                   fontWeight={700}
                   pointerEvents="none"
                 >

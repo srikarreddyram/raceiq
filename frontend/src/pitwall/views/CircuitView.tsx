@@ -17,7 +17,7 @@ import { api } from "../../api/client";
 import type { Circuit, CircuitMap } from "../../api/types";
 import { useAsync } from "../../api/useAsync";
 import { Bar, Card, EmptyState, ErrorState, SectionLabel, Stat, TableSkeleton, tierLabel } from "../../design/primitives";
-import { C, F, NUM } from "../../design/tokens";
+import { C, DISPLAY, F, NUM } from "../../design/tokens";
 import { TrackMap } from "../components/TrackMap";
 
 function CircuitRow({
@@ -39,9 +39,9 @@ function CircuitRow({
         width: "100%",
         gap: 12,
         padding: "11px 14px",
-        background: active ? "var(--rq-hover, rgba(201,168,76,0.08))" : "transparent",
+        background: active ? C.hover : "transparent",
         border: "none",
-        borderLeft: `2px solid ${active ? C.gold : "transparent"}`,
+        borderLeft: `2px solid ${active ? C.accent : "transparent"}`,
         borderBottom: `1px solid ${C.rule}`,
         cursor: "pointer",
         textAlign: "left",
@@ -66,7 +66,7 @@ export function CircuitView() {
   return (
     <div>
       <SectionLabel>Circuit view</SectionLabel>
-      <h1 style={{ fontFamily: F.display, fontSize: 34, margin: "8px 0 20px", letterSpacing: "0.02em" }}>
+      <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 20px", letterSpacing: "0.02em" }}>
         Circuit profiles
       </h1>
 
@@ -109,9 +109,9 @@ export function CircuitView() {
 
             {profile.data && !profile.loading && (
               <>
-                <Card accent={C.gold} style={{ padding: "22px 26px" }}>
+                <Card accent={C.accent} style={{ padding: "22px 26px" }}>
                   <SectionLabel>{profile.data.locality}, {profile.data.country}</SectionLabel>
-                  <h2 style={{ fontFamily: F.display, fontSize: 40, margin: "10px 0 20px", letterSpacing: "0.02em" }}>
+                  <h2 style={{ ...DISPLAY, fontSize: 40, margin: "10px 0 20px", letterSpacing: "0.02em" }}>
                     {profile.data.name}
                   </h2>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 24 }}>
@@ -127,7 +127,7 @@ export function CircuitView() {
                           ? "—"
                           : `${(profile.data.historical_sc_rate * 100).toFixed(0)}%`
                       }
-                      color={C.gold}
+                      color={C.accent}
                       size={26}
                     />
                     <Stat
@@ -208,7 +208,7 @@ function GeometryCard({ map }: { map: CircuitMap }) {
           unit={`${map.slow_corner_count}S · ${map.medium_corner_count}M · ${map.fast_corner_count}F`}
           size={24}
         />
-        <Stat label="Downforce demand" value={map.downforce_demand_index.toFixed(2)} color={C.gold} size={24} />
+        <Stat label="Downforce demand" value={map.downforce_demand_index.toFixed(2)} color={C.accent} size={24} />
         <Stat label="Elevation range" value={map.elevation_range_m.toFixed(1)} unit="m" size={24} />
         <Stat label="Braking distance" value={map.total_braking_distance_m.toFixed(0)} unit="m / lap" size={24} />
         <Stat label="Pit lane loss" value={map.pit_lane_delta.toFixed(1)} unit="s" size={24} />

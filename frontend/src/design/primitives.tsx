@@ -1,10 +1,14 @@
 /**
  * Core primitives — design system template §3. Small, composable, and
  * every one of them reads its colours from tokens.ts, never a literal.
+ *
+ * Styled after the F1 app: white cards with a soft lift off a light grey
+ * page, a coloured stripe down the left edge where a card belongs to
+ * something (a team, a compound, a status), and bold caps for labels.
  */
 
 import type { CSSProperties, ReactNode } from "react";
-import { C, F, NUM } from "./tokens";
+import { C, DISPLAY, F, NUM } from "./tokens";
 
 export function Card({
   children,
@@ -20,11 +24,12 @@ export function Card({
       style={{
         background: C.surface,
         border: `1px solid ${C.edge}`,
-        // An accent is a left-border stripe, not a full-card fill —
-        // reserves saturated colour for something that actually needs to
-        // draw the eye, keeps the base case quiet.
-        borderLeft: accent ? `3px solid ${accent}` : `1px solid ${C.edge}`,
-        borderRadius: 6,
+        // An accent is a left-border stripe, not a full-card fill — the
+        // F1 app's own device for team-coloured cards, and it keeps
+        // saturated colour for the one thing that should draw the eye.
+        borderLeft: accent ? `4px solid ${accent}` : `1px solid ${C.edge}`,
+        borderRadius: 8,
+        boxShadow: "0 1px 2px rgba(21,21,30,0.05), 0 2px 8px rgba(21,21,30,0.04)",
         ...style,
       }}
     >
@@ -34,19 +39,19 @@ export function Card({
 }
 
 /**
- * The eyebrow. Wide letter-spacing + mono + small size + accent colour is
- * the one recurring "this labels a block below it" signature used
- * everywhere — reuse this exact recipe rather than inventing a new label
- * style per screen.
+ * The eyebrow: small, bold, uppercase, in the accent colour — the one
+ * recurring "this labels a block below it" signature. Reuse this recipe
+ * rather than inventing a label style per screen.
  */
 export function SectionLabel({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
     <div
       style={{
         fontFamily: F.mono,
-        fontSize: 10,
-        color: C.gold,
-        letterSpacing: "0.4em",
+        fontWeight: 700,
+        fontSize: 11.5,
+        color: C.accent,
+        letterSpacing: "0.12em",
         textTransform: "uppercase",
         ...style,
       }}
@@ -59,9 +64,9 @@ export function SectionLabel({ children, style }: { children: ReactNode; style?:
 export type SegmentedOption = { value: string; label: string };
 
 /**
- * The two/three-way toggle. The active option switches TYPEFACE (mono →
- * display) as well as colour — "which one is active" should be readable
- * from 20 feet away, not just from a slightly-different grey.
+ * The two/three-way toggle. The active option is a solid accent pill with
+ * bolder type — "which one is active" should be readable from across the
+ * room, not just from a slightly different grey.
  */
 export function Segmented({
   options,
@@ -76,11 +81,11 @@ export function Segmented({
     <div
       style={{
         display: "inline-flex",
-        background: C.surface,
+        background: C.raised,
         border: `1px solid ${C.edge}`,
-        borderRadius: 4,
+        borderRadius: 999,
         padding: 3,
-        gap: 3,
+        gap: 2,
       }}
     >
       {options.map((o) => {
@@ -91,15 +96,16 @@ export function Segmented({
             onClick={() => onChange(o.value)}
             aria-pressed={active}
             style={{
-              background: active ? C.gold : "transparent",
-              color: active ? "var(--rq-on-accent, #000)" : C.dim,
+              background: active ? C.accent : "transparent",
+              color: active ? "var(--rq-on-accent, #fff)" : C.dim,
               border: "none",
-              borderRadius: 2,
-              padding: "7px 18px",
+              borderRadius: 999,
+              padding: "6px 16px",
               cursor: "pointer",
-              fontFamily: active ? F.display : F.mono,
-              fontSize: active ? 15 : 10,
-              letterSpacing: active ? "0.06em" : "0.22em",
+              fontFamily: F.mono,
+              fontWeight: active ? 700 : 600,
+              fontSize: 11.5,
+              letterSpacing: "0.06em",
               textTransform: "uppercase",
               transition: "all 200ms",
             }}
@@ -113,14 +119,11 @@ export function Segmented({
 }
 
 const TIERS = [
-  { min: 0.9, color: "#16A34A", label: "Elite" },
-  { min: 0.7, color: "#84CC16", label: "Strong" },
-  // The brand accent sits at "average" ON PURPOSE: "merely average" should
-  // read as neutral information, not as the app's own celebratory colour
-  // being spent on a mediocre result.
-  { min: 0.4, color: "#C9A84C", label: "Average" },
-  { min: 0.2, color: "#EA580C", label: "Below average" },
-  { min: 0, color: "#DC2626", label: "Poor" },
+  { min: 0.9, color: C.green, label: "Elite" },
+  { min: 0.7, color: "#5E9E1B", label: "Strong" },
+  { min: 0.4, color: C.amber, label: "Average" },
+  { min: 0.2, color: "#D9620B", label: "Below average" },
+  { min: 0, color: C.red, label: "Poor" },
 ];
 
 export function tierColor(pct: number | null | undefined): string {
@@ -149,7 +152,7 @@ export function Bar({
       style={{
         flex: 1,
         height,
-        background: "rgba(255,255,255,0.05)",
+        background: C.fill,
         borderRadius: height / 2,
         overflow: "hidden",
       }}
@@ -187,11 +190,11 @@ export function TableSkeleton({ rows = 10, columns = 4 }: { rows?: number; colum
             opacity: 1 - i * (0.6 / rows),
           }}
         >
-          <div style={{ width: 22, height: 9, background: "rgba(255,255,255,0.05)", borderRadius: 2 }} />
-          <div style={{ width: 150, height: 9, background: "rgba(255,255,255,0.07)", borderRadius: 2 }} />
+          <div style={{ width: 22, height: 9, background: C.fill, borderRadius: 2 }} />
+          <div style={{ width: 150, height: 9, background: C.fill, borderRadius: 2 }} />
           <div style={{ flex: 1 }} />
           {Array.from({ length: columns }).map((_, j) => (
-            <div key={j} style={{ width: 54, height: 9, background: "rgba(255,255,255,0.05)", borderRadius: 2 }} />
+            <div key={j} style={{ width: 54, height: 9, background: C.fill, borderRadius: 2 }} />
           ))}
         </div>
       ))}
@@ -207,8 +210,9 @@ export function EmptyState({ children }: { children: ReactNode }) {
         textAlign: "center",
         color: C.muted,
         fontFamily: F.mono,
-        fontSize: 11,
-        letterSpacing: "0.18em",
+        fontWeight: 600,
+        fontSize: 12,
+        letterSpacing: "0.08em",
       }}
     >
       {children}
@@ -220,12 +224,12 @@ export function EmptyState({ children }: { children: ReactNode }) {
 export function ErrorState({ message }: { message: string }) {
   return (
     <Card accent={C.red} style={{ padding: "16px 20px", marginBottom: 16 }}>
-      <div style={{ fontFamily: F.body, fontWeight: 600, fontSize: 14, color: C.text }}>
+      <div style={{ fontFamily: F.body, fontWeight: 700, fontSize: 15, color: C.text }}>
         The engine didn't answer
       </div>
-      <div style={{ fontFamily: F.mono, fontSize: 11.5, color: C.muted, marginTop: 5, lineHeight: 1.6 }}>
+      <div style={{ fontFamily: F.body, fontSize: 13, color: C.muted, marginTop: 5, lineHeight: 1.6 }}>
         {message} — check that the RaceIQ API is running (
-        <span style={{ color: C.gold }}>uv run uvicorn serving.api.main:app</span>).
+        <span style={{ ...NUM, fontSize: 12, color: C.accent }}>uv run uvicorn serving.api.main:app</span>).
       </div>
     </Card>
   );
@@ -250,9 +254,10 @@ export function Stat({
       <div
         style={{
           fontFamily: F.mono,
-          fontSize: 9,
+          fontWeight: 600,
+          fontSize: 10.5,
           color: C.faint,
-          letterSpacing: "0.22em",
+          letterSpacing: "0.1em",
           textTransform: "uppercase",
           marginBottom: 6,
         }}
@@ -260,10 +265,10 @@ export function Stat({
         {label}
       </div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-        <div style={{ ...NUM, fontFamily: F.display, fontSize: size, color: color ?? C.text, lineHeight: 1 }}>
+        <div style={{ ...DISPLAY, fontWeight: 700, fontSize: size, color: color ?? C.text, lineHeight: 1 }}>
           {value}
         </div>
-        {unit && <div style={{ fontFamily: F.mono, fontSize: 10, color: C.faint }}>{unit}</div>}
+        {unit && <div style={{ fontFamily: F.mono, fontWeight: 600, fontSize: 11, color: C.faint }}>{unit}</div>}
       </div>
     </div>
   );

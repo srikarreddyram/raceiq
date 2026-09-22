@@ -177,8 +177,8 @@ export function RaceSelector({
           onClick={onRun}
           disabled={running}
           style={{
-            background: running ? C.raised : C.gold,
-            color: running ? C.faint : "var(--rq-on-accent, #000)",
+            background: running ? C.raised : C.accent,
+            color: running ? C.faint : "var(--rq-on-accent, #fff)",
             border: "none",
             borderRadius: 4,
             padding: "11px 18px",

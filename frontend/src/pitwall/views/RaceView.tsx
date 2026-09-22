@@ -19,7 +19,7 @@ import type { ScoredStrategy } from "../../api/types";
 import { useAsync } from "../../api/useAsync";
 import { Card, EmptyState, ErrorState, SectionLabel, Stat, TableSkeleton, tierColor } from "../../design/primitives";
 import { accentVars, teamAccent } from "../../design/theme";
-import { compoundColor, C, F, NUM } from "../../design/tokens";
+import { C, DISPLAY, F, NUM, compoundColor } from "../../design/tokens";
 import { SPRING } from "../../design/Animations";
 import { FinishDistribution } from "../components/FinishDistribution";
 import { RaceSelector, useRaceSelection } from "../components/RaceSelector";
@@ -226,7 +226,7 @@ export function RaceView() {
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16, gap: 16, flexWrap: "wrap" }}>
         <div>
           <SectionLabel>Race view</SectionLabel>
-          <h1 style={{ fontFamily: F.display, fontSize: 34, margin: "8px 0 0", letterSpacing: "0.02em" }}>
+          <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 0", letterSpacing: "0.02em" }}>
             Strategy call
           </h1>
         </div>

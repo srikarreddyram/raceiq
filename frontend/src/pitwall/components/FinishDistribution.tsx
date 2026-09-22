@@ -8,18 +8,19 @@
  * parameterised by the view, not two copy-pasted ones.
  *
  * Bar colour is the data, not a fixed brand colour (§9): podium positions
- * read green, points positions gold, out-of-points muted.
+ * in the accent, points positions in carbon, out-of-points light grey.
  */
 
 import { useMemo, useState } from "react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Segmented } from "../../design/primitives";
 import { C, F } from "../../design/tokens";
+import { AXIS_LINE, AXIS_TICK, TOOLTIP_STYLE } from "./chartStyle";
 
 function positionColor(position: number): string {
-  if (position <= 3) return C.green;
-  if (position <= 10) return "#C9A84C";
-  return "#3a3a48";
+  if (position <= 3) return C.accent;
+  if (position <= 10) return C.carbon;
+  return C.inactive;
 }
 
 export function FinishDistribution({
@@ -48,7 +49,7 @@ export function FinishDistribution({
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <div style={{ fontFamily: F.mono, fontSize: 9.5, letterSpacing: "0.2em", color: C.faint }}>
+        <div style={{ fontFamily: F.mono, fontWeight: 600, fontSize: 11, letterSpacing: "0.08em", color: C.faint }}>
           {view === "exact" ? "P(FINISH EXACTLY HERE)" : "P(FINISH HERE OR BETTER)"}
         </div>
         <Segmented
@@ -65,25 +66,19 @@ export function FinishDistribution({
         <BarChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: -18 }}>
           <XAxis
             dataKey="position"
-            tick={{ fill: "rgba(240,240,240,0.38)", fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}
-            axisLine={{ stroke: "rgba(255,255,255,0.08)" }}
+            tick={AXIS_TICK}
+            axisLine={AXIS_LINE}
             tickLine={false}
           />
           <YAxis
             tickFormatter={(v: number) => `${Math.round(v * 100)}%`}
-            tick={{ fill: "rgba(240,240,240,0.38)", fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}
+            tick={AXIS_TICK}
             axisLine={false}
             tickLine={false}
           />
           <Tooltip
-            cursor={{ fill: "rgba(255,255,255,0.04)" }}
-            contentStyle={{
-              background: "#16161f",
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 4,
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 11,
-            }}
+            cursor={{ fill: C.fill }}
+            contentStyle={TOOLTIP_STYLE}
             labelFormatter={(position) => `P${position}`}
             formatter={(value) => [
               `${(Number(value) * 100).toFixed(1)}%`,

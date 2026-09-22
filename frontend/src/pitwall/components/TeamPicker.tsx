@@ -82,8 +82,8 @@ export function TeamPicker({ state }: { state: ReturnType<typeof useTeamSelectio
                 padding: "7px 11px",
                 borderRadius: 4,
                 cursor: "pointer",
-                border: `1px solid ${active ? C.gold : C.edge}`,
-                background: active ? "rgba(201,168,76,0.10)" : "transparent",
+                border: `1px solid ${active ? C.accent : C.edge}`,
+                background: active ? C.hover : "transparent",
                 color: active ? C.text : C.dim,
                 transition: "all 200ms",
               }}

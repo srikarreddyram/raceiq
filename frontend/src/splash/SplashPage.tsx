@@ -20,7 +20,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { C, F, NUM } from "../design/tokens";
+import { C, DISPLAY, F, NUM } from "../design/tokens";
 import { SPRING } from "../design/Animations";
 import { EdgeBezel } from "../design/chrome";
 import { DEFAULT_ACCENT } from "../design/theme";
@@ -43,12 +43,14 @@ function WordLine({
   delayBase?: number;
 }) {
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "0 0.32em" }}>
+    // Word gap in px from the headline's own size: an `em` here would be
+    // measured against this container's 16px, not the words' 76px.
+    <div style={{ display: "flex", flexWrap: "wrap", gap: `0 ${Math.round(size * 0.24)}px` }}>
       {text.split(" ").map((word, i) => (
         <span
           key={`${word}-${i}`}
           style={{
-            fontFamily: F.display,
+            ...DISPLAY,
             fontSize: size,
             lineHeight: 1.02,
             letterSpacing: "0.01em",
@@ -71,10 +73,11 @@ function Eyebrow({ children, active }: { children: ReactNode; active: boolean })
     <div
       style={{
         fontFamily: F.mono,
-        fontSize: 11,
-        letterSpacing: "0.45em",
+        fontWeight: 700,
+        fontSize: 13,
+        letterSpacing: "0.18em",
         textTransform: "uppercase",
-        color: C.gold,
+        color: C.accent,
         marginBottom: 22,
         opacity: active ? 1 : 0,
         animation: active ? "fadeUp 0.5s ease both" : "none",
@@ -90,9 +93,9 @@ function Prose({ children, active, delay = 0.5 }: { children: ReactNode; active:
     <p
       style={{
         fontFamily: F.body,
-        fontSize: 17,
-        lineHeight: 1.75,
-        color: C.muted,
+        fontSize: 18,
+        lineHeight: 1.7,
+        color: C.dim,
         maxWidth: 560,
         marginTop: 26,
         opacity: active ? 1 : 0,
@@ -124,12 +127,13 @@ function SceneStat({
         animationDelay: `${delay}s`,
       }}
     >
-      <div style={{ ...NUM, fontFamily: F.display, fontSize: 52, color: C.gold, lineHeight: 1 }}>{value}</div>
+      <div style={{ ...NUM, ...DISPLAY, fontSize: 52, color: C.accent, lineHeight: 1 }}>{value}</div>
       <div
         style={{
           fontFamily: F.mono,
-          fontSize: 9.5,
-          letterSpacing: "0.24em",
+          fontWeight: 700,
+          fontSize: 11.5,
+          letterSpacing: "0.1em",
           textTransform: "uppercase",
           color: C.faint,
           marginTop: 9,
@@ -160,16 +164,23 @@ function SectionOverlay({ children, active }: { children: ReactNode; active: boo
   );
 }
 
-/** Scene-specific backdrop: washes plus one animated element per scene. */
+/**
+ * Scene-specific backdrop. Light, like the F1 app: a soft wash per scene,
+ * the timing-screen grid, and the broadcast's angled red slash on the side
+ * away from the copy. The scrims that used to darken the page behind the
+ * text now lighten it instead — same job (legibility over the texture),
+ * opposite direction.
+ */
 function Backdrop({ section }: { section: number }) {
   const washes = [
-    `radial-gradient(70% 60% at 14% 22%, ${DEFAULT_ACCENT}24 0%, transparent 60%)`,
-    `radial-gradient(70% 70% at 82% 30%, #E1060030 0%, transparent 62%)`,
-    `radial-gradient(75% 65% at 20% 78%, #2563EB26 0%, transparent 62%)`,
-    `radial-gradient(70% 60% at 76% 24%, ${DEFAULT_ACCENT}2E 0%, transparent 60%)`,
-    `radial-gradient(70% 65% at 18% 30%, #16A34A22 0%, transparent 60%)`,
-    `radial-gradient(90% 80% at 50% 50%, ${DEFAULT_ACCENT}1F 0%, transparent 66%)`,
+    `radial-gradient(70% 60% at 14% 22%, ${DEFAULT_ACCENT}12 0%, transparent 60%)`,
+    `radial-gradient(70% 70% at 82% 30%, ${DEFAULT_ACCENT}18 0%, transparent 62%)`,
+    `radial-gradient(75% 65% at 20% 78%, ${C.carbon}0D 0%, transparent 62%)`,
+    `radial-gradient(70% 60% at 76% 24%, ${DEFAULT_ACCENT}16 0%, transparent 60%)`,
+    `radial-gradient(70% 65% at 18% 30%, ${C.carbon}0D 0%, transparent 60%)`,
+    `radial-gradient(90% 80% at 50% 50%, ${DEFAULT_ACCENT}12 0%, transparent 66%)`,
   ];
+  const slashVisible = section !== 5; // the finale is centred; nothing to sit beside
 
   return (
     <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
@@ -186,8 +197,7 @@ function Backdrop({ section }: { section: number }) {
         />
       ))}
 
-      {/* Timing-screen grid: the one persistent texture, subtle enough to
-          sit behind text at every scene. */}
+      {/* Timing-screen grid: the one persistent texture. */}
       <div
         style={{
           position: "absolute",
@@ -199,23 +209,41 @@ function Backdrop({ section }: { section: number }) {
         }}
       />
 
-      {/* Permanent radial vignette layer (§7's scrim system). */}
+      {/* The broadcast slash: a red band and a thin carbon one, skewed. */}
+      <div
+        style={{
+          position: "absolute",
+          top: "-10%",
+          bottom: "-10%",
+          right: "-6%",
+          width: "26%",
+          transform: `skewX(-14deg) translateX(${slashVisible ? 0 : 40}%)`,
+          opacity: slashVisible ? 1 : 0,
+          transition: `transform 700ms ${SPRING}, opacity 500ms ease`,
+          display: "flex",
+          gap: 14,
+        }}
+      >
+        <div style={{ width: 10, background: C.carbon }} />
+        <div style={{ flex: 1, background: `linear-gradient(180deg, ${DEFAULT_ACCENT} 0%, #B80500 100%)` }} />
+      </div>
+
+      {/* Scrims — lighten toward the copy side so text reads over the grid. */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background: "radial-gradient(120% 90% at 50% 50%, transparent 30%, rgba(0,0,0,0.72) 100%)",
+          background: "radial-gradient(120% 90% at 50% 50%, transparent 45%, rgba(242,242,244,0.7) 100%)",
         }}
       />
-      {/* Per-section scrim, biased toward the side the copy sits on. */}
       <div
         style={{
           position: "absolute",
           inset: 0,
           background:
             section === 5
-              ? "linear-gradient(180deg, rgba(10,10,15,0.55) 0%, rgba(10,10,15,0.35) 100%)"
-              : "linear-gradient(90deg, rgba(10,10,15,0.88) 0%, rgba(10,10,15,0.42) 55%, transparent 100%)",
+              ? "linear-gradient(180deg, rgba(242,242,244,0.55) 0%, rgba(242,242,244,0.35) 100%)"
+              : "linear-gradient(90deg, rgba(242,242,244,0.92) 0%, rgba(242,242,244,0.5) 55%, transparent 75%)",
           transition: "background 700ms ease",
         }}
       />
@@ -257,7 +285,7 @@ function NavDots({
             // readable as a progress indicator, not just a row of bullets.
             width: section === i ? 3 : 2,
             height: section === i ? 28 : 8,
-            background: section === i ? C.gold : `${DEFAULT_ACCENT}33`,
+            background: section === i ? C.accent : `${DEFAULT_ACCENT}33`,
             borderRadius: 2,
             border: "none",
             padding: 0,
@@ -284,11 +312,11 @@ function BrandMark() {
         gap: 14,
       }}
     >
-      <div style={{ fontFamily: F.display, fontSize: 25, letterSpacing: "0.1em", color: C.text }}>
-        RACE<span style={{ color: C.gold }}>IQ</span>
+      <div style={{ ...DISPLAY, fontStyle: "italic", fontSize: 28, color: C.text }}>
+        RACE<span style={{ color: C.accent }}>IQ</span>
       </div>
-      <div style={{ width: 1, height: 17, background: C.edge }} />
-      <div style={{ fontFamily: F.mono, fontSize: 9, letterSpacing: "0.3em", color: C.faint }}>
+      <div style={{ width: 1, height: 18, background: C.edge }} />
+      <div style={{ fontFamily: F.mono, fontWeight: 700, fontSize: 11, letterSpacing: "0.14em", color: C.faint }}>
         STRATEGY INTELLIGENCE
       </div>
     </div>
@@ -297,17 +325,18 @@ function BrandMark() {
 
 const linkButton = (primary: boolean): CSSProperties => ({
   fontFamily: F.mono,
-  fontSize: 11,
-  letterSpacing: "0.22em",
+  fontWeight: 700,
+  fontSize: 14,
+  letterSpacing: "0.08em",
   textTransform: "uppercase",
   padding: "15px 30px",
-  borderRadius: 3,
+  borderRadius: 6,
   textDecoration: "none",
   display: "inline-block",
   transition: "all 220ms",
-  background: primary ? C.gold : "transparent",
-  color: primary ? "var(--rq-on-accent, #000)" : C.text,
-  border: `1px solid ${primary ? "transparent" : C.edge}`,
+  background: primary ? C.accent : "transparent",
+  color: primary ? "var(--rq-on-accent, #fff)" : C.text,
+  border: `2px solid ${primary ? "transparent" : C.carbon}`,
 });
 
 export function SplashPage() {
@@ -328,7 +357,7 @@ export function SplashPage() {
         <SectionOverlay active={section === 0}>
           <Eyebrow active={section === 0}>Formation lap</Eyebrow>
           <WordLine text="Race intelligence." active={section === 0} />
-          <WordLine text="Built for the pit wall." active={section === 0} color={C.gold} delayBase={0.18} />
+          <WordLine text="Built for the pit wall." active={section === 0} color={C.accent} delayBase={0.18} />
           <Prose active={section === 0}>
             A circuit-adaptive, team-aware strategy engine trained on nine seasons of real Formula 1
             telemetry — not a lap-time calculator with a pit-stop constant bolted on.
@@ -355,7 +384,7 @@ export function SplashPage() {
         {/* Scene 2 — Lights out */}
         <SectionOverlay active={section === 1}>
           <Eyebrow active={section === 1}>Lights out</Eyebrow>
-          <WordLine text="0.4 seconds" active={section === 1} size={92} color={C.gold} />
+          <WordLine text="0.4 seconds" active={section === 1} size={92} color={C.accent} />
           <WordLine text="to decide." active={section === 1} delayBase={0.2} />
           <Prose active={section === 1}>
             Safety car deploys on lap 32. Pit now and you rejoin in traffic; stay out and you burn the
@@ -368,7 +397,7 @@ export function SplashPage() {
         <SectionOverlay active={section === 2}>
           <Eyebrow active={section === 2}>First corner</Eyebrow>
           <WordLine text="Nine seasons." active={section === 2} />
-          <WordLine text="Every lap." active={section === 2} color={C.gold} delayBase={0.18} />
+          <WordLine text="Every lap." active={section === 2} color={C.accent} delayBase={0.18} />
           <Prose active={section === 2}>
             FastF1 telemetry, Ergast results, and circuit weather reconciled into a leakage-safe feature
             store — every feature computed strictly from information available at or before the lap it
@@ -386,7 +415,7 @@ export function SplashPage() {
         <SectionOverlay active={section === 3}>
           <Eyebrow active={section === 3}>Pit window</Eyebrow>
           <WordLine text="Five thousand races," active={section === 3} size={64} />
-          <WordLine text="before you call one." active={section === 3} size={64} color={C.gold} delayBase={0.2} />
+          <WordLine text="before you call one." active={section === 3} size={64} color={C.accent} delayBase={0.2} />
           <Prose active={section === 3}>
             The engine enumerates every feasible remaining strategy, then runs each one through a Monte
             Carlo simulation sharing one set of safety-car and retirement draws — so candidates are
@@ -403,7 +432,7 @@ export function SplashPage() {
         <SectionOverlay active={section === 4}>
           <Eyebrow active={section === 4}>Final laps</Eyebrow>
           <WordLine text="Your car." active={section === 4} />
-          <WordLine text="Your strategy." active={section === 4} color={C.gold} delayBase={0.18} />
+          <WordLine text="Your strategy." active={section === 4} color={C.accent} delayBase={0.18} />
           <Prose active={section === 4}>
             Seven models run underneath: lap time, tyre degradation, pit timing, safety car probability,
             finishing position and win probability — plus a sequence model that scores a whole remaining
@@ -434,7 +463,7 @@ export function SplashPage() {
                 animationDelay: "0.62s",
               }}
             >
-              <Link to="/pitwall" style={{ ...linkButton(true), animation: "goldPulse 3.2s ease infinite" }}>
+              <Link to="/pitwall" style={{ ...linkButton(true), animation: "accentPulse 2.4s ease infinite" }}>
                 Enter the pit wall
               </Link>
               <a
@@ -465,17 +494,17 @@ export function SplashPage() {
             pointerEvents: "none",
           }}
         >
-          <div style={{ fontFamily: F.mono, fontSize: 8.5, letterSpacing: "0.3em", color: C.faint }}>SCROLL</div>
-          <div style={{ width: 1, height: 26, background: C.gold, animation: "scrollNudge 1.9s ease infinite" }} />
+          <div style={{ fontFamily: F.mono, fontWeight: 700, fontSize: 10.5, letterSpacing: "0.18em", color: C.faint }}>SCROLL</div>
+          <div style={{ width: 2, height: 26, background: C.accent, animation: "scrollNudge 1.9s ease infinite" }} />
         </div>
 
         {/* Scrub bar — the only element that tracks continuous progress. */}
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 2, background: C.rule }}>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 4, background: C.rule }}>
           <div
             style={{
               height: "100%",
               width: `${progress * 100}%`,
-              background: C.gold,
+              background: C.accent,
               transition: "width 120ms linear",
             }}
           />

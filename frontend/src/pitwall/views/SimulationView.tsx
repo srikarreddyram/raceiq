@@ -30,7 +30,7 @@ import type { PitPlan, SimulationOutcome } from "../../api/types";
 import { useAsync } from "../../api/useAsync";
 import { Card, EmptyState, ErrorState, SectionLabel, Stat, TableSkeleton } from "../../design/primitives";
 import { accentVars, teamAccent } from "../../design/theme";
-import { compoundColor, C, F, NUM } from "../../design/tokens";
+import { C, DISPLAY, F, NUM, compoundColor } from "../../design/tokens";
 import { FinishDistribution } from "../components/FinishDistribution";
 import { RaceSelector, useRaceSelection } from "../components/RaceSelector";
 
@@ -52,7 +52,7 @@ function StrategyTooltip({ payload }: { payload?: { payload: PlottedStrategy }[]
       style={{
         background: C.raised,
         border: `1px solid ${C.edge}`,
-        borderLeft: `3px solid ${point.recommended ? C.gold : C.edge}`,
+        borderLeft: `3px solid ${point.recommended ? C.accent : C.edge}`,
         borderRadius: 4,
         padding: "10px 12px",
         fontFamily: F.mono,
@@ -62,7 +62,7 @@ function StrategyTooltip({ payload }: { payload?: { payload: PlottedStrategy }[]
     >
       <div style={{ color: C.text, marginBottom: 7, lineHeight: 1.45 }}>{point.action}</div>
       {point.recommended && (
-        <div style={{ color: C.gold, fontSize: 8.5, letterSpacing: "0.18em", marginBottom: 7 }}>
+        <div style={{ color: C.accent, fontSize: 8.5, letterSpacing: "0.18em", marginBottom: 7 }}>
           ENGINE'S PICK
         </div>
       )}
@@ -240,7 +240,7 @@ export function SimulationView() {
   return (
     <div style={accentVars(accent)}>
       <SectionLabel>Strategy simulation</SectionLabel>
-      <h1 style={{ fontFamily: F.display, fontSize: 34, margin: "8px 0 16px", letterSpacing: "0.02em" }}>
+      <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 16px", letterSpacing: "0.02em" }}>
         Compare the trade
       </h1>
 
@@ -260,21 +260,21 @@ export function SimulationView() {
             </div>
             <ResponsiveContainer width="100%" height={280}>
               <ScatterChart margin={{ top: 8, right: 12, bottom: 18, left: -12 }}>
-                <CartesianGrid stroke="rgba(255,255,255,0.05)" />
+                <CartesianGrid stroke={C.fill} />
                 <XAxis
                   type="number"
                   dataKey="risk"
                   name="Risk"
-                  tick={{ fill: "rgba(240,240,240,0.38)", fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}
-                  axisLine={{ stroke: "rgba(255,255,255,0.08)" }}
+                  tick={{ fill: C.faint, fontSize: 10, fontFamily: F.mono }}
+                  axisLine={{ stroke: C.edge }}
                   tickLine={false}
                   label={{
                     value: "RISK (POSITION VARIANCE)",
                     position: "insideBottom",
                     offset: -10,
-                    fill: "rgba(240,240,240,0.38)",
+                    fill: C.faint,
                     fontSize: 9,
-                    fontFamily: "'JetBrains Mono', monospace",
+                    fontFamily: F.mono,
                     letterSpacing: "0.18em",
                   }}
                 />
@@ -282,7 +282,7 @@ export function SimulationView() {
                   type="number"
                   dataKey="points"
                   name="Expected points"
-                  tick={{ fill: "rgba(240,240,240,0.38)", fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }}
+                  tick={{ fill: C.faint, fontSize: 10, fontFamily: F.mono }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -291,12 +291,12 @@ export function SimulationView() {
                     default labels a point by its axis values, and "which
                     strategy is this dot" is the entire question someone
                     hovers a scatter to answer. */}
-                <Tooltip cursor={{ stroke: "rgba(255,255,255,0.12)" }} content={<StrategyTooltip />} />
+                <Tooltip cursor={{ stroke: C.line }} content={<StrategyTooltip />} />
                 <Scatter data={plotted} isAnimationActive={false}>
                   {plotted.map((entry, i) => (
                     <Cell
                       key={i}
-                      fill={entry.recommended ? accent : "rgba(240,240,240,0.28)"}
+                      fill={entry.recommended ? accent : C.inactive}
                       stroke={entry.recommended ? accent : "transparent"}
                       strokeWidth={entry.recommended ? 2 : 0}
                     />
@@ -324,8 +324,8 @@ export function SimulationView() {
               style={{
                 marginTop: 16,
                 width: "100%",
-                background: running ? C.raised : C.gold,
-                color: running ? C.faint : "var(--rq-on-accent, #000)",
+                background: running ? C.raised : C.accent,
+                color: running ? C.faint : "var(--rq-on-accent, #fff)",
                 border: "none",
                 borderRadius: 4,
                 padding: "12px",

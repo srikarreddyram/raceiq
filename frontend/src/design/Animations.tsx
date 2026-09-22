@@ -14,6 +14,8 @@
  *   transitions (width, height) get 700ms.
  */
 
+import { C, F } from "./tokens";
+
 export const SPRING = "cubic-bezier(0.34,1.56,0.64,1)";
 
 export function Animations() {
@@ -41,9 +43,9 @@ export function Animations() {
 
       /* Ambient pulsing glow — a "still working" heartbeat, or a CTA that
          should breathe without being obnoxious. */
-      @keyframes goldPulse {
-        0%, 100% { box-shadow: 0 0 20px rgba(201,168,76,0.2); }
-        50%      { box-shadow: 0 0 48px rgba(201,168,76,0.5); }
+      @keyframes accentPulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(225,6,0,0.28); }
+        50%      { box-shadow: 0 0 0 10px rgba(225,6,0,0); }
       }
 
       /* A tiny vertical nudge + opacity pulse for a "scroll for more" affordance. */
@@ -69,16 +71,17 @@ export function Animations() {
       * { box-sizing: border-box; }
       html, body, #root { margin: 0; padding: 0; min-height: 100%; }
       body {
-        background: #0a0a0f;
-        color: #F0F0F0;
-        font-family: 'Inter', sans-serif;
+        background: ${C.bg};
+        color: ${C.text};
+        font-family: ${F.body};
         -webkit-font-smoothing: antialiased;
       }
-      /* Scrollbar, themed rather than left as the OS default on a dark page. */
+      select, option, button { font-family: ${F.body}; }
+      /* Scrollbar, themed to the light page rather than left as the OS default. */
       ::-webkit-scrollbar { width: 10px; height: 10px; }
-      ::-webkit-scrollbar-track { background: #0a0a0f; }
-      ::-webkit-scrollbar-thumb { background: #1d1d28; border-radius: 5px; }
-      ::-webkit-scrollbar-thumb:hover { background: #2a2a38; }
+      ::-webkit-scrollbar-track { background: ${C.bg}; }
+      ::-webkit-scrollbar-thumb { background: #CACAD2; border-radius: 5px; }
+      ::-webkit-scrollbar-thumb:hover { background: #A9A9B3; }
 
       @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {
