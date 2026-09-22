@@ -14,6 +14,7 @@
  */
 
 import { useState } from "react";
+import { NavLink } from "react-router-dom";
 import { api } from "../../api/client";
 import type { ScoredStrategy } from "../../api/types";
 import { useAsync } from "../../api/useAsync";
@@ -203,7 +204,10 @@ function CrossCheck({
 
 export function RaceView() {
   const state = useRaceSelection();
-  const { selection, ready } = state;
+  const { selection } = state;
+  // In-race calls replay a real lap, so an unrun round has nothing to call yet.
+  const upcoming = state.race != null && !state.race.has_results;
+  const ready = state.ready && !upcoming;
   const [nSimulations, setNSimulations] = useState(2000);
 
   const recommendation = useAsync(
@@ -228,7 +232,8 @@ export function RaceView() {
         <div>
           <SectionLabel>Race strategy</SectionLabel>
           <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 0", letterSpacing: "0.02em" }}>
-            {state.race?.name ?? "Strategy call"} — lap {selection.lap}
+            {state.race?.name ?? "Strategy call"}
+            {!upcoming && ` — lap ${selection.lap}`}
           </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -255,9 +260,37 @@ export function RaceView() {
         </div>
       </div>
 
-      <RaceSelector state={state} />
+      <RaceSelector state={state} completedOnly />
 
-      {!ready && <EmptyState>SELECT A RACE, DRIVER AND LAP TO RUN THE ENGINE</EmptyState>}
+      {upcoming && (
+        <Card style={{ padding: "22px 24px" }}>
+          <div style={{ ...DISPLAY, fontSize: 22 }}>{state.race?.name} hasn't been run yet</div>
+          <div style={{ fontFamily: F.body, fontSize: 13.5, color: C.muted, marginTop: 8, lineHeight: 1.6 }}>
+            In-race strategy calls replay a real lap of a race that's happened. For an upcoming race, the Race Weekend planner
+            plans it from the forecast, the circuit's history and the expected grid — or pick a completed race above to replay.
+          </div>
+          <NavLink
+            to="/pitwall/weekend"
+            style={{
+              display: "inline-block",
+              marginTop: 14,
+              background: C.carbon,
+              color: "#fff",
+              borderRadius: 6,
+              padding: "10px 18px",
+              fontFamily: F.mono,
+              fontWeight: 700,
+              fontSize: 12,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              textDecoration: "none",
+            }}
+          >
+            Plan {state.race?.name}
+          </NavLink>
+        </Card>
+      )}
+      {!ready && !upcoming && <EmptyState>SELECT A RACE, DRIVER AND LAP TO RUN THE ENGINE</EmptyState>}
       {recommendation.error && <ErrorState message={recommendation.error} />}
       {ready && recommendation.loading && <TableSkeleton rows={6} />}
 

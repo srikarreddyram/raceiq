@@ -480,6 +480,9 @@ class RaceConditions(BaseModel):
     historical_overtaking_rate: float | None
     pit_loss_seconds: float
     cold_start_circuit: bool  # no prior races here: circuit priors are unknown
+    source: str  # "measured" (a run race), "forecast", "typical" or "override"
+    note: str
+    rain_probability: float | None
 
 
 class RacePlanResponse(BaseModel):
@@ -496,7 +499,11 @@ class RacePlanResponse(BaseModel):
     team_id: str
     grid_position: int
     actual_grid_position: int | None
+    grid_is_expected: bool  # an unrun race's slot from season-average grid, not chosen
     total_laps: int
+    laps_known: bool  # False only for a first race at a circuit
+    is_future: bool
+    prior_races_at_circuit: int | None
     n_simulations: int
     conditions: RaceConditions
     starting_compound: str
@@ -553,3 +560,15 @@ class SpeedProfile(BaseModel):
     season: int
     races: int
     teams: list[TeamSpeed]
+
+
+class CalendarRound(BaseModel):
+    race_id: str
+    season: int
+    round: int
+    name: str
+    circuit_id: str
+    circuit_name: str
+    country: str
+    date: date_type
+    has_results: bool

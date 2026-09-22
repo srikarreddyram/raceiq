@@ -19,15 +19,20 @@ from models.common.data import is_classified
 from race_plan.plan import build_race_plan
 from race_plan.tyre_allocation import recommend_tyre_allocation
 from serving.api.db import get_db
-from serving.api.schemas import RacePlanResponse, Standings, StandingEntry
+from serving.api.schemas import CalendarRound, RacePlanResponse, Standings, StandingEntry
 from strategy_engine.pit_loss import typical_pit_loss_seconds
 
 router = APIRouter(tags=["planner"])
 
 
 @lru_cache(maxsize=256)
-def _cached_plan(race_id: str, driver_id: str, grid: int | None, n_simulations: int):
-    plan = build_race_plan(race_id, driver_id, n_simulations=n_simulations, grid_override=grid)
+def _cached_plan(
+    race_id: str, driver_id: str, grid: int | None, n_simulations: int, track_temp: float | None, rain: bool | None, hour: str
+):
+    # `hour` refreshes cached upcoming-race plans hourly, as their forecast moves.
+    plan = build_race_plan(
+        race_id, driver_id, n_simulations=n_simulations, grid_override=grid, track_temp=track_temp, rain=rain
+    )
     tyres = recommend_tyre_allocation(race_id, driver_id, plan.compound_sequence)
     return plan, tyres
 
@@ -38,16 +43,18 @@ def get_race_plan(
     driver_id: str = Query(...),
     grid: int | None = Query(None, ge=1, le=22, description="Plan from this grid slot instead of the real one"),
     n_simulations: int = Query(1200, ge=200, le=5000),
+    track_temp: float | None = Query(None, ge=0, le=75, description="What-if track temperature, °C"),
+    rain: bool | None = Query(None, description="What-if: plan for rain (true) or a dry race (false)"),
     con: duckdb.DuckDBPyConnection = Depends(get_db),
 ) -> RacePlanResponse:
+    # The calendar, not silver.races: an upcoming round has no results yet.
     race = con.execute(
         """
-        SELECT r.name, r.circuit_id, c.name AS circuit_name, r.date,
+        SELECT cal.name, cal.circuit_id, cal.circuit_name, cal.date,
                ch.circuit_baseline_track_temp, ch.historical_overtaking_rate
-        FROM silver.races r
-        LEFT JOIN silver.circuits c ON c.circuit_id = r.circuit_id
-        LEFT JOIN gold.circuit_history ch ON ch.race_id = r.race_id
-        WHERE r.race_id = ?
+        FROM silver.calendar cal
+        LEFT JOIN gold.circuit_history ch ON ch.race_id = cal.race_id
+        WHERE cal.race_id = ?
         """,
         [race_id],
     ).fetchone()
@@ -60,7 +67,9 @@ def get_race_plan(
     ).fetchone()
 
     try:
-        plan, tyres = _cached_plan(race_id, driver_id, grid, n_simulations)
+        from datetime import datetime
+
+        plan, tyres = _cached_plan(race_id, driver_id, grid, n_simulations, track_temp, rain, datetime.now().strftime("%Y%m%d%H"))
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(422, detail=str(exc)) from exc
 
@@ -77,17 +86,24 @@ def get_race_plan(
         team_id=plan.team_id,
         grid_position=plan.grid_position,
         actual_grid_position=int(actual[0]) if actual and actual[0] else None,
+        grid_is_expected=plan.grid_is_expected,
         total_laps=plan.total_laps,
+        laps_known=plan.laps_known,
+        is_future=plan.is_future,
+        prior_races_at_circuit=plan.prior_races_at_circuit,
         n_simulations=n_simulations,
         conditions={
             "track_temp": plan.track_temp,
             "air_temp": plan.air_temp,
             "rain_expected": plan.rain_expected,
-            "circuit_baseline_track_temp": finite(race[4]),
+            "circuit_baseline_track_temp": finite(plan.circuit_baseline_track_temp),
             "historical_sc_rate": finite(plan.historical_sc_rate),
-            "historical_overtaking_rate": finite(race[5]),
+            "historical_overtaking_rate": finite(plan.historical_overtaking_rate),
             "pit_loss_seconds": typical_pit_loss_seconds(plan.circuit_id),
             "cold_start_circuit": plan.cold_start_circuit,
+            "source": plan.conditions_source,
+            "note": plan.conditions_note,
+            "rain_probability": plan.rain_probability,
         },
         starting_compound=plan.starting_compound,
         compound_sequence=plan.compound_sequence,
@@ -127,7 +143,9 @@ def get_race_plan(
                 {"compound": t.compound, "laps_run": t.laps_run, "first_session": t.first_session, "sessions": list(t.sessions)}
                 for t in tyres.used_in_practice
             ],
-            "warnings": tyres.warnings,
+            # Before an unrun weekend, "no practice laps" isn't a data gap —
+            # practice hasn't happened, and this is the plan to follow in it.
+            "warnings": [w for w in tyres.warnings if not (plan.is_future and w.startswith("No practice"))],
         },
     )
 
@@ -177,3 +195,21 @@ def get_standings(
             for t, r in constructors.iterrows()
         ],
     )
+
+
+@router.get("/calendar", response_model=list[CalendarRound])
+def get_calendar(
+    season: int | None = Query(None, description="Defaults to the latest season on the calendar"),
+    con: duckdb.DuckDBPyConnection = Depends(get_db),
+) -> list[CalendarRound]:
+    """Every round of a season, run or not — the planner plans both."""
+    if season is None:
+        season = con.execute("SELECT MAX(season) FROM silver.calendar").fetchone()[0]
+    rows = con.execute(
+        """
+        SELECT race_id, season, round, name, circuit_id, circuit_name, country, date, has_results
+        FROM silver.calendar WHERE season = ? ORDER BY round
+        """,
+        [season],
+    ).df()
+    return [CalendarRound(**r) for r in rows.to_dict(orient="records")]

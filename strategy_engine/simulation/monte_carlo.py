@@ -321,7 +321,10 @@ def _safety_car_row(state: RaceState, lap_number: int) -> pd.DataFrame:
         "rainfall_flag": int(state.rainfall_flag),
         "circuit_id": state.circuit_id,
     }
-    row = {col: values.get(col, 0) for col in SAFETY_CAR_FEATURES}
+    # None -> NaN: a circuit with no history (a first race there) has no
+    # safety-car rate or baseline temperature. LightGBM reads NaN as
+    # missing; a None makes the whole column an object dtype it refuses.
+    row = {col: (np.nan if values.get(col, 0) is None else values.get(col, 0)) for col in SAFETY_CAR_FEATURES}
     return apply_reference_categoricals(pd.DataFrame([row]))
 
 

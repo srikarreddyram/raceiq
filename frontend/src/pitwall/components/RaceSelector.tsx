@@ -11,7 +11,7 @@
  */
 
 import { useMemo } from "react";
-import type { Driver, Race } from "../../api/types";
+import type { CalendarRound, Driver } from "../../api/types";
 import { C, F, NUM } from "../../design/tokens";
 import { useWeekend } from "../WeekendContext";
 
@@ -65,17 +65,23 @@ export function RaceSelector({
   onRun,
   running,
   showLap = true,
+  completedOnly = false,
 }: {
   state: ReturnType<typeof useRaceSelection>;
   onRun?: () => void;
   running?: boolean;
   showLap?: boolean;
+  /** In-race tools need a race that's been run; the planner takes any round. */
+  completedOnly?: boolean;
 }) {
   const { selection, races, drivers, setRaceId, setLap, setDriverId } = state;
 
   const sortedRaces = useMemo(
-    () => [...(races.data ?? [])].sort((a: Race, b: Race) => b.round - a.round),
-    [races.data],
+    () =>
+      [...(races.data ?? [])]
+        .filter((r: CalendarRound) => !completedOnly || r.has_results || r.race_id === selection.raceId)
+        .sort((a: CalendarRound, b: CalendarRound) => a.round - b.round),
+    [races.data, completedOnly, selection.raceId],
   );
   const sortedDrivers = useMemo(
     () =>
@@ -104,8 +110,9 @@ export function RaceSelector({
         <select value={selection.raceId} onChange={(e) => setRaceId(e.target.value)} style={controlStyle} disabled={races.loading}>
           {races.loading && <option value="">Loading…</option>}
           {sortedRaces.map((r) => (
-            <option key={r.race_id} value={r.race_id}>
-              R{String(r.round).padStart(2, "0")} — {r.name}
+            <option key={r.race_id} value={r.race_id} disabled={completedOnly && !r.has_results}>
+              R{String(r.round).padStart(2, "0")} — {r.name} · {new Date(r.date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+              {r.has_results ? "" : " · upcoming"}
             </option>
           ))}
         </select>

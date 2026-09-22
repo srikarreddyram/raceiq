@@ -24,6 +24,11 @@ import { RaceSelector, controlStyle, labelStyle, useRaceSelection } from "../com
 
 const pct = (v: number) => `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`;
 
+function daysUntil(date: string): string {
+  const days = Math.round((new Date(date).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
+  return days <= 0 ? "RACE DAY" : days === 1 ? "TOMORROW" : `IN ${days} DAYS`;
+}
+
 /** The F1 graphic for a tyre: a ring in the compound colour, its initial inside. */
 export function TyreIcon({ compound, size = 26 }: { compound: string; size?: number }) {
   const colour = compoundColor(compound);
@@ -61,7 +66,11 @@ function StintTimeline({ plan }: { plan: RacePlan }) {
     from: i === 0 ? 0 : plan.stops[i - 1].nominal_lap,
     to: i < plan.stops.length ? plan.stops[i].nominal_lap : plan.total_laps,
   }));
-  const ticks = Array.from({ length: Math.floor(plan.total_laps / 10) + 1 }, (_, i) => i * 10).concat(plan.total_laps);
+  // Every 10 laps plus the flag — dropping a 10-lap tick that would sit on
+  // top of the flag's label.
+  const ticks = Array.from({ length: Math.floor(plan.total_laps / 10) + 1 }, (_, i) => i * 10)
+    .filter((t) => t === 0 || plan.total_laps - t >= 6)
+    .concat(plan.total_laps);
 
   return (
     <div>
@@ -158,16 +167,34 @@ function StopCard({ stop }: { stop: PlannedStop }) {
   );
 }
 
+const SOURCE_LABEL: Record<RacePlan["conditions"]["source"], string> = {
+  measured: "Measured on the day",
+  forecast: "Forecast · Open-Meteo",
+  typical: "Typical for this circuit",
+  override: "Set by hand",
+};
+
 function Conditions({ plan }: { plan: RacePlan }) {
   const c = plan.conditions;
   const tempDelta = c.circuit_baseline_track_temp != null ? c.track_temp - c.circuit_baseline_track_temp : null;
   return (
     <Card style={{ padding: "18px 20px" }}>
-      <SectionLabel style={{ marginBottom: 14 }}>Conditions</SectionLabel>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 14 }}>
+        <SectionLabel>Conditions</SectionLabel>
+        <span style={{ fontFamily: F.mono, fontWeight: 700, fontSize: 10.5, letterSpacing: "0.08em", color: C.dim, border: `1px solid ${C.edge}`, borderRadius: 999, padding: "3px 10px" }}>
+          {SOURCE_LABEL[c.source].toUpperCase()}
+        </span>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 18 }}>
         <Stat label="Track temp" value={c.track_temp.toFixed(0)} unit={tempDelta == null ? "°C" : `°C · ${tempDelta >= 0 ? "+" : ""}${tempDelta.toFixed(0)} vs usual`} size={24} />
         <Stat label="Air temp" value={c.air_temp.toFixed(0)} unit="°C" size={24} />
-        <Stat label="Weather" value={c.rain_expected ? "Rain" : "Dry"} size={24} color={c.rain_expected ? "#1F5FD1" : undefined} />
+        <Stat
+          label="Weather"
+          value={c.rain_expected ? "Rain" : "Dry"}
+          unit={c.rain_probability != null ? `${Math.round(c.rain_probability * 100)}% chance` : undefined}
+          size={24}
+          color={c.rain_expected ? "#1F5FD1" : undefined}
+        />
         <Stat label="Safety car history" value={c.historical_sc_rate == null ? "—" : pct(c.historical_sc_rate)} unit={c.historical_sc_rate == null ? "" : "of races"} size={24} />
         <Stat
           label="Overtaking"
@@ -176,12 +203,18 @@ function Conditions({ plan }: { plan: RacePlan }) {
         />
         <Stat label="Pit lane loss" value={c.pit_loss_seconds.toFixed(1)} unit="s" size={24} />
       </div>
+      <div style={{ fontFamily: F.body, fontSize: 12.5, color: C.muted, marginTop: 14, lineHeight: 1.55 }}>{c.note}</div>
       {c.cold_start_circuit && (
-        <div style={{ fontFamily: F.body, fontSize: 12.5, color: C.muted, marginTop: 14, lineHeight: 1.55 }}>
-          <b style={{ color: C.text }}>New venue.</b> No previous race here, so safety-car likelihood, overtaking difficulty and
-          the usual track temperature have no history behind them — the plan falls back to grid-wide averages.
+        <div style={{ fontFamily: F.body, fontSize: 12.5, color: C.muted, marginTop: 8, lineHeight: 1.55 }}>
+          <b style={{ color: C.text }}>New venue.</b> No previous race here in this data, so safety-car likelihood, overtaking
+          difficulty and the usual track temperature have no history behind them — grid-wide averages stand in.
+          {!plan.laps_known && ` The lap count (${plan.total_laps}) is the calendar's typical race length, not this circuit's.`}
         </div>
       )}
+      <div style={{ fontFamily: F.body, fontSize: 12, color: C.faint, marginTop: 8, lineHeight: 1.55 }}>
+        Track temperature changes the safety-car picture, not the tyre plan: across every era in this data, hotter races show no
+        measurable change in tyre wear once Pirelli has picked the compounds for the circuit (harder ones for the hot, abrasive tracks).
+      </div>
     </Card>
   );
 }
@@ -272,12 +305,18 @@ export function PlannerView() {
   const state = useRaceSelection();
   const { selection, race } = state;
   const [grid, setGrid] = useState<number | null>(null);
-  // A what-if grid slot belongs to one race and driver.
-  useEffect(() => setGrid(null), [selection.raceId, selection.driverId]);
+  const [trackTemp, setTrackTemp] = useState<number | null>(null);
+  const [rain, setRain] = useState<boolean | null>(null);
+  // What-ifs belong to one race and driver.
+  useEffect(() => {
+    setGrid(null);
+    setTrackTemp(null);
+    setRain(null);
+  }, [selection.raceId, selection.driverId]);
 
   const plan = useAsync(
-    () => api.racePlan(selection.raceId, selection.driverId, grid),
-    [selection.raceId, selection.driverId, grid],
+    () => api.racePlan(selection.raceId, selection.driverId, { grid, trackTemp, rain }),
+    [selection.raceId, selection.driverId, grid, trackTemp, rain],
     Boolean(selection.raceId && selection.driverId),
   );
   const p = plan.data;
@@ -286,28 +325,72 @@ export function PlannerView() {
   return (
     <div style={accentVars(teamAccent(p?.team_id ?? driver?.constructor_id ?? null))}>
       <SectionLabel>Race weekend planner</SectionLabel>
-      <h1 style={{ ...DISPLAY, fontSize: 38, margin: "8px 0 4px" }}>{race?.name ?? "Race weekend"}</h1>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", margin: "8px 0 4px" }}>
+        <h1 style={{ ...DISPLAY, fontSize: 38, margin: 0 }}>{race?.name ?? "Race weekend"}</h1>
+        {race && (
+          <span
+            style={{
+              fontFamily: F.mono,
+              fontWeight: 700,
+              fontSize: 11,
+              letterSpacing: "0.1em",
+              padding: "5px 12px",
+              borderRadius: 999,
+              background: race.has_results ? C.fill : C.carbon,
+              color: race.has_results ? C.dim : "#fff",
+            }}
+          >
+            {race.has_results ? "COMPLETED" : `UPCOMING · ${daysUntil(race.date)}`}
+          </span>
+        )}
+      </div>
       <div style={{ fontFamily: F.body, fontSize: 14, color: C.muted, marginBottom: 18 }}>
-        {p ? `${p.circuit_name ?? p.circuit_id} · ${p.date} · ${p.total_laps} laps` : race ? race.date : ""}
+        {race ? `${race.circuit_name} · ${race.country} · ${new Date(race.date).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "long" })}` : ""}
+        {p ? ` · ${p.total_laps} laps${p.laps_known ? "" : " (assumed)"}` : ""}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 14, alignItems: "start" }}>
         <RaceSelector state={state} showLap={false} />
-        <div style={{ background: C.surface, border: `1px solid ${C.edge}`, borderRadius: 8, padding: "14px 18px", minWidth: 220 }}>
-          <label style={labelStyle}>Grid slot {grid != null && p?.actual_grid_position ? `(real: P${p.actual_grid_position})` : ""}</label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <select
-              value={grid ?? ""}
-              onChange={(e) => setGrid(e.target.value ? Number(e.target.value) : null)}
-              style={{ ...controlStyle, width: 150 }}
-            >
-              <option value="">Real grid{p?.actual_grid_position ? ` — P${p.actual_grid_position}` : ""}</option>
+        <div style={{ display: "flex", gap: 14 }}>
+          <div style={{ background: C.surface, border: `1px solid ${C.edge}`, borderRadius: 8, padding: "14px 18px" }}>
+            <label style={labelStyle}>Grid slot</label>
+            <select value={grid ?? ""} onChange={(e) => setGrid(e.target.value ? Number(e.target.value) : null)} style={{ ...controlStyle, width: 190 }}>
+              <option value="">
+                {race?.has_results
+                  ? `Real grid${p?.actual_grid_position ? ` — P${p.actual_grid_position}` : ""}`
+                  : `Expected${p && grid == null ? ` P${p.grid_position}` : ""}`}
+              </option>
               {Array.from({ length: 22 }, (_, i) => i + 1).map((g) => (
                 <option key={g} value={g}>
                   What if P{g}?
                 </option>
               ))}
             </select>
+          </div>
+          <div style={{ background: C.surface, border: `1px solid ${C.edge}`, borderRadius: 8, padding: "14px 18px" }}>
+            <label style={labelStyle}>What-if conditions</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="number"
+                min={10}
+                max={70}
+                placeholder={p ? `${p.conditions.track_temp.toFixed(0)}°C` : "°C"}
+                value={trackTemp ?? ""}
+                onChange={(e) => setTrackTemp(e.target.value === "" ? null : Number(e.target.value))}
+                aria-label="Track temperature"
+                style={{ ...controlStyle, ...NUM, width: 86 }}
+              />
+              <select
+                value={rain == null ? "" : rain ? "rain" : "dry"}
+                onChange={(e) => setRain(e.target.value === "" ? null : e.target.value === "rain")}
+                aria-label="Weather"
+                style={{ ...controlStyle, width: 124 }}
+              >
+                <option value="">{p ? `${p.conditions.rain_expected ? "Rain" : "Dry"} · as is` : "Weather"}</option>
+                <option value="dry">Dry</option>
+                <option value="rain">Rain</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>
@@ -324,12 +407,21 @@ export function PlannerView() {
 
       {p && !plan.loading && (
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          {p.conditions.rain_expected && (
+            <Card accent="#1F5FD1" style={{ padding: "14px 20px" }}>
+              <div style={{ fontFamily: F.body, fontSize: 13.5, color: C.text, lineHeight: 1.55 }}>
+                <b>Rain {p.conditions.rain_probability != null ? `likely (${Math.round(p.conditions.rain_probability * 100)}%)` : "expected"}.</b>{" "}
+                This is the dry baseline plan — intermediates and wets are a call made on the day, when the track actually gets wet.
+                Rain raises the chance of a safety car, which the hold windows below already account for.
+              </div>
+            </Card>
+          )}
           <Card accent="var(--rq-accent)" style={{ padding: "22px 26px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
               <div>
                 <div style={{ ...labelStyle, marginBottom: 6 }}>
                   {driver ? `${driver.given_name} ${driver.family_name}` : p.driver_id} · starts P{p.grid_position}
-                  {grid != null ? " (what-if)" : ""}
+                  {grid != null ? " (what-if)" : p.grid_is_expected ? " (expected — qualifying not run)" : ""}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   {p.compound_sequence.map((c, i) => (
@@ -371,7 +463,7 @@ export function PlannerView() {
           <div style={{ fontFamily: F.body, fontSize: 12, color: C.faint, lineHeight: 1.6 }}>
             {p.n_simulations.toLocaleString()} simulated races per finalist strategy, lap by lap with traffic and track position. Rivals are
             projected from season form and charged the stops their tyres need. Pace differences between strategies come from measured tyre
-            wear for this season.
+            wear for this season.{p.is_future ? " Planned before the race: the entry list, form and car profiles are as they stand after the latest round." : ""}
           </div>
         </div>
       )}

@@ -4,16 +4,16 @@
  * simulator, so picking "Leclerc at Madring" once carries through all
  * three.
  *
- * Deliberately the CURRENT season only. These are tools for the weekend
- * in front of you, not a browser of every race since 2018 (the Driver,
- * Car Profile and Tyre views are where history lives). It defaults to the
- * latest race with data and the championship leader — never a hard-coded
- * team, which used to paint every view Ferrari red.
+ * Deliberately the CURRENT season, its whole calendar — run and unrun.
+ * These are tools for the weekend in front of you, not a browser of every
+ * race since 2018 (the Car and Driver pages are where history lives). It
+ * defaults to the NEXT race on the calendar (the latest run one once the
+ * season is over) and the championship leader — never a hard-coded team.
  */
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "../api/client";
-import type { Driver, Race, Standings } from "../api/types";
+import type { CalendarRound, Driver, Standings } from "../api/types";
 import { useAsync, type AsyncState } from "../api/useAsync";
 
 export type Weekend = {
@@ -24,10 +24,10 @@ export type Weekend = {
   setRaceId: (id: string) => void;
   setDriverId: (id: string) => void;
   setLap: (lap: number) => void;
-  races: AsyncState<Race[]>;
+  races: AsyncState<CalendarRound[]>;
   drivers: AsyncState<Driver[]>;
   standings: AsyncState<Standings>;
-  race: Race | undefined;
+  race: CalendarRound | undefined;
   ready: boolean;
 };
 
@@ -36,18 +36,21 @@ const WeekendContext = createContext<Weekend | null>(null);
 export function WeekendProvider({ children }: { children: ReactNode }) {
   const standings = useAsync(() => api.standings(), []);
   const season = standings.data?.season ?? null;
-  const races = useAsync(() => api.races(season ?? undefined), [season], season != null);
+  const races = useAsync(() => api.calendar(season ?? undefined), [season], season != null);
   const drivers = useAsync(() => api.drivers(season ?? undefined), [season], season != null);
 
   const [raceId, setRaceId] = useState("");
   const [driverId, setDriverId] = useState("");
   const [lap, setLap] = useState(20);
 
-  // Defaults once the season is known: the latest race, the points leader.
+  // Defaults once the season is known: the next race, the points leader.
   useEffect(() => {
-    if (!raceId && standings.data) setRaceId(standings.data.through_race_id);
+    if (!raceId && races.data?.length) {
+      const next = races.data.find((r) => !r.has_results);
+      setRaceId(next?.race_id ?? races.data[races.data.length - 1].race_id);
+    }
     if (!driverId && standings.data?.drivers.length) setDriverId(standings.data.drivers[0].id);
-  }, [standings.data, raceId, driverId]);
+  }, [races.data, standings.data, raceId, driverId]);
 
   const race = races.data?.find((r) => r.race_id === raceId);
   const value = useMemo<Weekend>(

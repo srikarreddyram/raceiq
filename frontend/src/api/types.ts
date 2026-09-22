@@ -356,7 +356,11 @@ export type RacePlan = {
   team_id: string;
   grid_position: number;
   actual_grid_position: number | null;
+  grid_is_expected: boolean;
   total_laps: number;
+  laps_known: boolean;
+  is_future: boolean;
+  prior_races_at_circuit: number | null;
   n_simulations: number;
   conditions: {
     track_temp: number;
@@ -367,6 +371,9 @@ export type RacePlan = {
     historical_overtaking_rate: number | null;
     pit_loss_seconds: number;
     cold_start_circuit: boolean;
+    source: "measured" | "forecast" | "typical" | "override";
+    note: string;
+    rain_probability: number | null;
   };
   starting_compound: string;
   compound_sequence: string[];
@@ -405,3 +412,6 @@ export type TeamSpeed = {
 
 /** GET /teams/speed — straight-line speed against overall pace, 2023 onwards. */
 export type SpeedProfile = { season: number; races: number; teams: TeamSpeed[] };
+
+/** GET /calendar — every round of a season, run or not. */
+export type CalendarRound = Race & { circuit_name: string; country: string; has_results: boolean };

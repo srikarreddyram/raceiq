@@ -154,8 +154,38 @@ def load_circuits(raw_root: Path, con: duckdb.DuckDBPyConnection) -> None:
     write_bronze_table(con, "ergast_circuits", pd.DataFrame(rows), dedup_keys=["circuit_id"])
 
 
+def load_schedule(raw_root: Path, con: duckdb.DuckDBPyConnection) -> None:
+    """Every round of each season's calendar, whether or not it has been
+    run — results only exist for races that have happened."""
+    rows = []
+    for path in sorted(raw_root.glob("ergast/*/schedule.json")):
+        payload, ingested_at = _load_envelope(path)
+        for race in payload["MRData"]["RaceTable"]["Races"]:
+            circuit = race["Circuit"]
+            rows.append(
+                {
+                    "season": int(race["season"]),
+                    "round": int(race["round"]),
+                    "race_name": race["raceName"],
+                    "circuit_id": circuit["circuitId"],
+                    "circuit_name": circuit["circuitName"],
+                    "locality": circuit["Location"]["locality"],
+                    "country": circuit["Location"]["country"],
+                    "latitude": float(circuit["Location"]["lat"]),
+                    "longitude": float(circuit["Location"]["long"]),
+                    "date": race["date"],
+                    "time_utc": race.get("time"),
+                    "_source": "ergast",
+                    "_ingested_at": ingested_at,
+                }
+            )
+    if rows:
+        write_bronze_table(con, "ergast_schedule", pd.DataFrame(rows), dedup_keys=["season", "round"])
+
+
 def load_all(raw_root: Path, con: duckdb.DuckDBPyConnection) -> None:
     load_circuits(raw_root, con)
+    load_schedule(raw_root, con)
     load_results(raw_root, con)
     load_qualifying(raw_root, con)
     load_constructor_standings(raw_root, con)

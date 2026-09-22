@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-from pipelines.silver import circuits, constructors, drivers, laps, pit_stops, races, track_status, weather
+from pipelines.silver import calendar, circuits, constructors, drivers, laps, pit_stops, races, track_status, weather
 from pipelines.silver.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ BUILD_ORDER = [
     ("circuits", circuits.build),
     ("drivers", drivers.build),
     ("races", races.build),
+    ("calendar", calendar.build),
     ("laps", laps.build),
     ("pit_stops", pit_stops.build),
     ("track_status", track_status.build),

@@ -108,6 +108,17 @@ class RacePlan:
     expected_points: float
     considered: list[dict] = field(default_factory=list)
     cold_start_circuit: bool = False
+    # Planning an unrun race (race_plan/future.py): where the conditions
+    # came from, and whether the grid slot was chosen or expected.
+    is_future: bool = False
+    conditions_source: str = "measured"
+    conditions_note: str = "Measured during the race."
+    rain_probability: float | None = None
+    grid_is_expected: bool = False
+    laps_known: bool = True
+    prior_races_at_circuit: int | None = None
+    historical_overtaking_rate: float | None = None
+    circuit_baseline_track_temp: float | None = None
 
     @property
     def compound_choice_is_decisive(self) -> bool:
@@ -300,19 +311,73 @@ def _windows_from_candidates(best: StrategyScore, scored: list[StrategyScore]) -
 
 
 def build_race_plan(
-    race_id: str, driver_id: str, n_simulations: int = 2000, seed: int = 42, grid_override: int | None = None
+    race_id: str,
+    driver_id: str,
+    n_simulations: int = 2000,
+    seed: int = 42,
+    grid_override: int | None = None,
+    track_temp: float | None = None,
+    rain: bool | None = None,
 ) -> RacePlan:
-    from race_plan.field import build_pre_race_field
+    """Plan one driver's race — run or unrun.
 
-    state, race_rows = _starting_state(race_id, driver_id, grid_override)
-    # Pre-race field, not the in-race snapshot: see race_plan/field.py for
-    # what reusing the lap-1 snapshot does to this plan.
-    rivals = build_pre_race_field(race_id, exclude_driver_id=driver_id)
+    A completed race starts from its own first lap and measured weather
+    (with optional what-if overrides). An upcoming one starts from the
+    circuit's history, a forecast or typical conditions, the expected grid
+    and the current entry list (race_plan/future.py).
+    """
+    from race_plan.field import build_pre_race_field, driver_season_form
+    from race_plan.future import future_setup, has_race_data
 
-    # Our own season form, from the identical source the rivals use.
-    from race_plan.field import driver_season_form
+    con = get_connection()
+    try:
+        run = has_race_data(con, race_id)
+    finally:
+        con.close()
 
-    pace_anchor = driver_season_form(race_id, driver_id)
+    future_meta: dict = {}
+    if run:
+        state, race_rows = _starting_state(race_id, driver_id, grid_override)
+        # Pre-race field, not the in-race snapshot: see race_plan/field.py for
+        # what reusing the lap-1 snapshot does to this plan.
+        rivals = build_pre_race_field(race_id, exclude_driver_id=driver_id)
+        # Our own season form, from the identical source the rivals use.
+        pace_anchor = driver_season_form(race_id, driver_id)
+        measured_track = float(race_rows.track_temp.mean())
+        conditions = {
+            "track_temp": track_temp if track_temp is not None else measured_track,
+            "air_temp": float(race_rows.air_temp.mean()),
+            "rain_expected": rain if rain is not None else bool(race_rows.rainfall_flag.max()),
+            "source": "override" if (track_temp is not None or rain is not None) else "measured",
+            "note": "Set by hand, over the conditions measured on the day."
+            if (track_temp is not None or rain is not None)
+            else "Measured during the race.",
+            "rain_probability": None,
+        }
+        if conditions["source"] == "override":
+            baseline = state.circuit_baseline_track_temp
+            state = replace(
+                state,
+                track_temp=conditions["track_temp"],
+                rainfall_flag=conditions["rain_expected"],
+                condition_delta=(conditions["track_temp"] - baseline) if baseline is not None else state.condition_delta,
+            )
+    else:
+        state, rivals, cond, priors, pace_anchor, _entry = future_setup(race_id, driver_id, grid_override, track_temp, rain)
+        conditions = {
+            "track_temp": cond.track_temp,
+            "air_temp": cond.air_temp,
+            "rain_expected": cond.rain_expected,
+            "source": cond.source,
+            "note": cond.note,
+            "rain_probability": cond.rain_probability,
+        }
+        future_meta = {
+            "is_future": True,
+            "grid_is_expected": grid_override is None,
+            "laps_known": priors["laps_known"],
+            "prior_races_at_circuit": priors["prior_races"],
+        }
 
     results = {}
     for compound in PLANNABLE_STARTING_COMPOUNDS:
@@ -376,9 +441,15 @@ def build_race_plan(
         circuit_id=state.circuit_id,
         grid_position=int(state.current_position),
         total_laps=state.race_total_laps,
-        track_temp=float(race_rows.track_temp.mean()),
-        air_temp=float(race_rows.air_temp.mean()),
-        rain_expected=bool(race_rows.rainfall_flag.max()),
+        track_temp=float(conditions["track_temp"]),
+        air_temp=float(conditions["air_temp"]),
+        rain_expected=bool(conditions["rain_expected"]),
+        historical_overtaking_rate=state.historical_overtaking_rate,
+        circuit_baseline_track_temp=state.circuit_baseline_track_temp,
+        conditions_source=conditions["source"],
+        conditions_note=conditions["note"],
+        rain_probability=conditions["rain_probability"],
+        **future_meta,
         historical_sc_rate=state.historical_sc_rate,
         starting_compound=starting_compound,
         stops=stops,

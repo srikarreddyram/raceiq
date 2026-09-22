@@ -38,6 +38,15 @@ def ingest_circuits(season: int) -> None:
     logger.info("Wrote %s", destination)
 
 
+def ingest_schedule(season: int) -> None:
+    """The season's full calendar, run and unrun — the race weekend planner
+    plans upcoming races from it, not just the ones with results."""
+    config = load_config()
+    payload = client.get_season_schedule(season, config)
+    destination = write_json(config.raw_data_root, "ergast", f"{season}/schedule", payload)
+    logger.info("Wrote %s", destination)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -47,6 +56,7 @@ def main() -> None:
     args = parser.parse_args()
 
     ingest_circuits(args.season)
+    ingest_schedule(args.season)
     if args.round_number is not None:
         ingest_round(args.season, args.round_number)
 

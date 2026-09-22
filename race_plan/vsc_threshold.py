@@ -78,27 +78,21 @@ class WaitWindow:
 
 
 def per_lap_caution_probability(state: RaceState, lap_number: int) -> float:
-    """The Safety Car model's P(caution within the next N laps), converted
-    to a single-lap hazard via the standard "at least one event" identity —
-    the same conversion build_shared_context uses, so the planner and the
-    simulator can't disagree about how likely a caution is.
+    """The chance a caution STARTS on this lap — the Safety Car model's
+    window probability converted to a per-lap hazard and scaled by the
+    calibrated onset rate, exactly as build_shared_context does, so the
+    planner and the simulator can't disagree about how likely a caution is.
+    (They used to: this skipped the calibration, which the simulator's
+    real-outcome check showed over-predicts cautions ~1.7x, so the planner
+    told drivers to hold out for a safety car longer than was worth it.)
+    Built from the simulator's own model row, which also turns a new
+    venue's missing history into NaN rather than a dtype error.
     """
+    from strategy_engine.simulation.monte_carlo import SC_ONSET_SCALE, _safety_car_row
+
     model = load_latest_model("safety_car_probability")
-    values = {
-        "lap_number": lap_number,
-        "laps_remaining": state.race_total_laps - lap_number,
-        "closest_gap_on_track": state.gap_to_car_ahead,
-        "condition_delta": state.condition_delta,
-        "historical_sc_rate": state.historical_sc_rate,
-        "safety_car_active": 0,
-        "yellow_active": 0,
-        "vsc_active": 0,
-        "rainfall_flag": int(state.rainfall_flag),
-        "circuit_id": state.circuit_id,
-    }
-    row = {col: values.get(col, 0) for col in SAFETY_CAR_FEATURES}
-    p_window = float(model.predict_proba(apply_reference_categoricals(pd.DataFrame([row])))[0, 1])
-    return 1 - (1 - p_window) ** (1 / SAFETY_CAR_WINDOW_LAPS)
+    p_window = float(model.predict_proba(_safety_car_row(state, lap_number))[0, 1])
+    return SC_ONSET_SCALE * (1 - (1 - p_window) ** (1 / SAFETY_CAR_WINDOW_LAPS))
 
 
 def compute_wait_window(

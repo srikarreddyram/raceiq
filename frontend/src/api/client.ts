@@ -14,6 +14,7 @@
  */
 
 import type {
+  CalendarRound,
   CarProfile,
   Circuit,
   CircuitMap,
@@ -89,8 +90,18 @@ export const api = {
   races: (season?: number) => request<Race[]>(`/races${season ? `?season=${season}` : ""}`),
 
   standings: (season?: number) => request<Standings>(`/standings${season ? `?season=${season}` : ""}`),
-  racePlan: (raceId: string, driverId: string, grid?: number | null) =>
-    request<RacePlan>(`/races/${raceId}/plan?driver_id=${driverId}${grid ? `&grid=${grid}` : ""}`),
+  calendar: (season?: number) => request<CalendarRound[]>(`/calendar${season ? `?season=${season}` : ""}`),
+  racePlan: (
+    raceId: string,
+    driverId: string,
+    opts: { grid?: number | null; trackTemp?: number | null; rain?: boolean | null } = {},
+  ) => {
+    const q = new URLSearchParams({ driver_id: driverId });
+    if (opts.grid) q.set("grid", String(opts.grid));
+    if (opts.trackTemp != null) q.set("track_temp", String(opts.trackTemp));
+    if (opts.rain != null) q.set("rain", String(opts.rain));
+    return request<RacePlan>(`/races/${raceId}/plan?${q}`);
+  },
 
   modelHealth: () => request<ModelHealth[]>("/monitoring/models"),
   lapTimeOverlay: (raceId: string, driverId: string) =>
