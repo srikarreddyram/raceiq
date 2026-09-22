@@ -4,11 +4,10 @@
  * motion, no scroll choreography, everything above the fold and legible
  * at a glance.
  *
- * PRD 13.2 names seven views. Five are built here (Race, Strategy
- * Simulation, Circuit, Car Profile, Tyre); the rest are listed in the nav
- * as unavailable, with the specific missing backend named, rather than
- * silently omitted or stubbed with fake panels:
- *   - Driver needs a per-driver history endpoint
+ * PRD 13.2 names seven views. Six are built here (Race, Strategy
+ * Simulation, Circuit, Car Profile, Tyre, Driver); the last is listed in
+ * the nav as unavailable, with the specific missing backend named, rather
+ * than silently omitted or stubbed with fake panels:
  *   - Model Performance needs monitoring/ exposed over the API (it exists
  *     as a CLI report today, not an endpoint)
  */
@@ -18,6 +17,7 @@ import { EdgeBezel, HeaderStripe } from "../design/chrome";
 import { C, F } from "../design/tokens";
 import { CarProfileView } from "./views/CarProfileView";
 import { CircuitView } from "./views/CircuitView";
+import { DriverView } from "./views/DriverView";
 import { RaceView } from "./views/RaceView";
 import { SimulationView } from "./views/SimulationView";
 import { TyreView } from "./views/TyreView";
@@ -30,7 +30,7 @@ const NAV: NavItem[] = [
   { to: "/pitwall/circuit", label: "Circuit" },
   { to: "/pitwall/car-profile", label: "Car Profile" },
   { to: "/pitwall/tyre", label: "Tyre" },
-  { to: "/pitwall/driver", label: "Driver", disabled: "needs a driver-history endpoint" },
+  { to: "/pitwall/driver", label: "Driver" },
   { to: "/pitwall/models", label: "Model Perf", disabled: "monitoring/ is CLI-only today" },
 ];
 
@@ -143,6 +143,7 @@ export function PitWall() {
           <Route path="circuit" element={<CircuitView />} />
           <Route path="car-profile" element={<CarProfileView />} />
           <Route path="tyre" element={<TyreView />} />
+          <Route path="driver" element={<DriverView />} />
           <Route path="*" element={<Navigate to="/pitwall/race" replace />} />
         </Routes>
       </main>

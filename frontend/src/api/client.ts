@@ -19,6 +19,7 @@ import type {
   CircuitMap,
   CircuitProfile,
   Driver,
+  DriverProfile,
   LapTimePrediction,
   PitPlan,
   Race,
@@ -76,6 +77,8 @@ export const api = {
   tyres: (teamId: string, season: number) => request<TyreReport>(`/teams/${teamId}/tyres?season=${season}`),
 
   drivers: (season?: number) => request<Driver[]>(`/drivers${season ? `?season=${season}` : ""}`),
+  driverProfile: (driverId: string, season: number) =>
+    request<DriverProfile>(`/drivers/${driverId}/profile?season=${season}`),
   races: (season?: number) => request<Race[]>(`/races${season ? `?season=${season}` : ""}`),
 
   predictLapTime: (body: { race_id: string; lap_number: number; driver_id: string }) =>

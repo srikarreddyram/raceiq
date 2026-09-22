@@ -216,3 +216,77 @@ export type TyreReport = {
   compounds: CompoundReport[];
   remaining_life: { race_id: string; laps: RemainingLifeLap[] } | null;
 };
+
+export type DriverRaceResult = {
+  race_id: string;
+  race_name: string | null;
+  circuit_id: string | null;
+  team_id: string | null;
+  grid: number | null;
+  position: number | null;
+  classified: boolean;
+  status: string | null;
+  points: number | null;
+  teammate_id: string | null;
+  teammate_position: number | null;
+  teammate_gap_s: number | null;
+  teammate_gap_laps: number | null;
+};
+
+export type DriverProfile = {
+  driver_id: string;
+  code: string | null;
+  given_name: string | null;
+  family_name: string | null;
+  nationality: string | null;
+  season: number;
+  seasons: number[];
+  summary: {
+    races: number;
+    points: number | null;
+    wins: number;
+    podiums: number;
+    not_classified: number;
+    avg_grid: number | null;
+    avg_finish: number | null;
+    ahead_of_teammate: number;
+    head_to_head_races: number;
+    median_teammate_gap_s: number | null;
+  };
+  races: DriverRaceResult[];
+  career: {
+    season: number;
+    era: string;
+    teams: string[];
+    races: number;
+    points: number | null;
+    wins: number;
+    podiums: number;
+    avg_finish: number | null;
+    not_classified: number;
+    median_teammate_gap_s: number | null;
+  }[];
+  circuits: {
+    circuit_id: string;
+    circuit_name: string | null;
+    races: number;
+    best_finish: number | null;
+    avg_finish: number | null;
+    wins: number;
+    last_race_id: string;
+    last_position: number | null;
+    last_status: string | null;
+    median_teammate_gap_s: number | null;
+  }[];
+  wet_dry: {
+    era: string;
+    dry_laps: number;
+    wet_laps: number;
+    wet_races: number;
+    dry_teammate_gap_s: number | null;
+    wet_teammate_gap_s: number | null;
+    dry_field_delta_s: number | null;
+    wet_field_delta_s: number | null;
+  }[];
+  min_wet_laps: number;
+};

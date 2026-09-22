@@ -280,3 +280,88 @@ class TyreReport(BaseModel):
     fuel_track_seconds_per_lap: float
     compounds: list[CompoundReport]
     remaining_life: RemainingLifeTrace | None
+
+
+class DriverRaceResult(BaseModel):
+    race_id: str
+    race_name: str | None
+    circuit_id: str | None
+    team_id: str | None
+    grid: int | None  # null for a pit-lane start (Ergast grid 0)
+    position: int | None  # finishing ORDER, retirements included
+    classified: bool
+    status: str | None
+    points: float | None
+    teammate_id: str | None
+    teammate_position: int | None
+    # Median lap-time gap to the teammate on shared clean green laps; < 0 = faster.
+    teammate_gap_s: float | None
+    teammate_gap_laps: int | None
+
+
+class DriverSeasonSummary(BaseModel):
+    races: int
+    points: float | None
+    wins: int
+    podiums: int
+    not_classified: int
+    avg_grid: float | None
+    avg_finish: float | None  # classified finishes only
+    ahead_of_teammate: int
+    head_to_head_races: int
+    median_teammate_gap_s: float | None
+
+
+class DriverCareerSeason(BaseModel):
+    season: int
+    era: str
+    teams: list[str]
+    races: int
+    points: float | None
+    wins: int
+    podiums: int
+    avg_finish: float | None
+    not_classified: int
+    median_teammate_gap_s: float | None
+
+
+class DriverCircuitRecord(BaseModel):
+    circuit_id: str
+    circuit_name: str | None
+    races: int
+    best_finish: int | None
+    avg_finish: float | None
+    wins: int
+    last_race_id: str
+    last_position: int | None
+    last_status: str | None
+    median_teammate_gap_s: float | None
+
+
+class WetDrySplit(BaseModel):
+    era: str
+    dry_laps: int
+    wet_laps: int
+    wet_races: int
+    dry_teammate_gap_s: float | None
+    wet_teammate_gap_s: float | None  # null below min_wet_laps
+    dry_field_delta_s: float | None
+    wet_field_delta_s: float | None
+
+
+class DriverProfile(BaseModel):
+    """PRD Section 13.2's Driver View — see driver_profiles/profile.py."""
+
+    driver_id: str
+    code: str | None
+    given_name: str | None
+    family_name: str | None
+    nationality: str | None
+    season: int
+    seasons: list[int]
+    summary: DriverSeasonSummary
+    races: list[DriverRaceResult]
+    career: list[DriverCareerSeason]
+    circuits: list[DriverCircuitRecord]
+    wet_dry: list[WetDrySplit]
+    min_wet_laps: int

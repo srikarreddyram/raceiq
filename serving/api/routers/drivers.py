@@ -1,12 +1,14 @@
-"""GET /drivers — PRD Section 14."""
+"""GET /drivers and /drivers/{id}/profile — PRD Section 14 and the Driver
+View of Section 13.2."""
 
 from __future__ import annotations
 
 import duckdb
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from serving.api.db import get_db
-from serving.api.schemas import Driver
+from driver_profiles.profile import driver_profile
+from serving.api.schemas import Driver, DriverProfile
 
 router = APIRouter(prefix="/drivers", tags=["drivers"])
 
@@ -39,3 +41,21 @@ def list_drivers(
             """
         ).df()
     return [Driver(**row) for row in rows.to_dict(orient="records")]
+
+
+@router.get("/{driver_id}/profile", response_model=DriverProfile)
+def get_driver_profile(
+    driver_id: str,
+    season: int | None = Query(None, description="Defaults to the driver's latest season"),
+    con: duckdb.DuckDBPyConnection = Depends(get_db),
+) -> DriverProfile:
+    if season is None:
+        season = con.execute(
+            "SELECT MAX(season) FROM bronze.ergast_results WHERE driver_id = ?", [driver_id]
+        ).fetchone()[0]
+        if season is None:
+            raise HTTPException(404, detail=f"No results for driver {driver_id!r}")
+    try:
+        return DriverProfile(**driver_profile(con, driver_id, season))
+    except LookupError as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
