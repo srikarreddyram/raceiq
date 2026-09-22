@@ -89,9 +89,16 @@ def season_model(season: int) -> dict:
     yd = g["lap_time_seconds"] - g["lap_time_seconds"].groupby(key).transform("mean")
     beta, *_ = np.linalg.lstsq(Xd.to_numpy(), yd.to_numpy(), rcond=None)
     coef = dict(zip(X.columns, beta))
+    # The compound intercepts are identified only relative to each other
+    # (every dry lap is on exactly one compound, so their sum is collinear
+    # with the per-driver mean). Expressed relative to MEDIUM: negative is
+    # quicker on fresh tyres.
+    offsets = {c: float(coef[f"is_{c}"]) for c in DRY_COMPOUNDS}
+    base = offsets["MEDIUM"]
     return {
         "fuel_track_seconds_per_lap": float(coef["lap_number"]),
         "field_wear_seconds_per_lap": {c: float(coef[f"age_{c}"]) for c in DRY_COMPOUNDS},
+        "compound_offset_seconds": {c: offsets[c] - base for c in DRY_COMPOUNDS},
         "laps_used": int(len(g)),
     }
 

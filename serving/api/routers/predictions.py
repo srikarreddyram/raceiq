@@ -17,13 +17,14 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 
 from models.common.data import load_race_features
-from strategy_engine.engine import recommend_strategy
-from strategy_engine.field import build_field_snapshot_from_gold
+from strategy_engine.engine import candidate_pace_overrides, recommend_strategy
+from strategy_engine.field import build_field_snapshot_from_gold, driver_recent_pace
 from strategy_engine.oracles import predict_next_lap_time
 from strategy_engine.scoring.score import score_strategy
 from strategy_engine.search.candidates import Strategy
 from strategy_engine.simulation.monte_carlo import build_shared_context, simulate_strategy
 from strategy_engine.state import RaceState
+from strategy_engine.tyre_pace import tyre_adjusted_rivals
 from serving.api.schemas import (
     LapTimePredictionRequest,
     LapTimePredictionResponse,
@@ -71,7 +72,14 @@ def predict_strategy_optimal(request: StrategyRequest) -> StrategyRecommendation
     rivals = build_field_snapshot_from_gold(request.race_id, request.lap_number, request.driver_id)
 
     try:
-        recommendation, n_candidates = recommend_strategy(state, rivals, n_simulations=request.n_simulations)
+        recommendation, n_candidates = recommend_strategy(
+            state,
+            rivals,
+            n_simulations=request.n_simulations,
+            pace_anchor=driver_recent_pace(request.race_id, request.lap_number, request.driver_id),
+            season=int(request.race_id.split("_")[0]),
+            exclude_race_id=request.race_id,
+        )
     except RuntimeError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
@@ -100,9 +108,16 @@ def simulate(request: SimulateRequest) -> SimulateResponse:
         pit_plan=tuple(request.pit_plan),
         label=", ".join(f"Pit lap {lap} -> {compound}" for lap, compound in request.pit_plan) or "No further stops",
     )
+    # Same pace treatment as the engine's own candidates, so a user-built
+    # plan and the engine's pick are directly comparable (see
+    # engine.candidate_pace_overrides and strategy_engine/tyre_pace.py).
+    season = int(request.race_id.split("_")[0])
+    rivals = tyre_adjusted_rivals(rivals, state, season)
     rng = np.random.default_rng()
     shared = build_shared_context(state, rivals, request.n_simulations, rng)
-    result = simulate_strategy(state, strategy, rivals, shared)
+    anchor = driver_recent_pace(request.race_id, request.lap_number, request.driver_id)
+    (pace,) = candidate_pace_overrides(state, [strategy], anchor, season)
+    result = simulate_strategy(state, strategy, rivals, shared, pace_deviation_override=pace)
     scored = score_strategy(result)
 
     return SimulateResponse(

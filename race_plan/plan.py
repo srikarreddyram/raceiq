@@ -47,12 +47,12 @@ import pandas as pd
 
 from models.common.data import load_race_features
 from models.common.db import get_connection
+from race_plan.field import starting_gap_for_position
 from race_plan.vsc_threshold import WaitWindow, compute_wait_window
 from strategy_engine.scoring.score import StrategyScore, score_strategy
 from strategy_engine.search.candidates import generate_candidates
-from strategy_engine.lstm_oracle import predict_trajectory
+from strategy_engine.tyre_pace import plan_cost, wear_rates
 from strategy_engine.simulation.monte_carlo import (
-    PACE_ESTIMATE_UNCERTAINTY_PRE_RACE,
     _deterministic_tyre_plan,
     build_shared_context,
     simulate_strategy,
@@ -181,10 +181,23 @@ def _starting_state(race_id: str, driver_id: str) -> tuple[RaceState, pd.DataFra
     grid = _grid_position(race_id, driver_id)
     if grid is not None:
         # The plan is made before the start, so track position is the grid
-        # slot, and there is no gap to anyone yet — a pre-race plan that
-        # inherited lap 1's measured gaps would be quietly using the result
-        # of a start it's supposed to be planning for.
-        state = replace(state, current_position=float(grid), gap_to_leader=0.0, tyre_age=0.0, stint_number=1)
+        # slot — a pre-race plan that inherited lap 1's measured gaps would
+        # be quietly using the result of a start it's supposed to be
+        # planning for.
+        #
+        # The gap comes from the same grid-slot table the rivals' does
+        # (race_plan/field.py). It used to be 0.0 for our driver at every
+        # grid slot while rivals got their slot's measured gap — so a P16
+        # starter was placed level with the leader, the sticky-track-position
+        # rule counted no rival as having started ahead, and the grid was
+        # worth almost nothing in every plan.
+        state = replace(
+            state,
+            current_position=float(grid),
+            gap_to_leader=starting_gap_for_position(grid),
+            tyre_age=0.0,
+            stint_number=1,
+        )
     return state, race_rows
 
 
@@ -220,31 +233,23 @@ def _plan_for_starting_compound(
         return None
 
     rng = np.random.default_rng(seed)
-    # Pre-race uncertainty, not the in-race figure: nothing about this
-    # car's pace today has been observed yet.
-    shared = build_shared_context(
-        start_state, rivals, n_simulations, rng, pace_uncertainty=PACE_ESTIMATE_UNCERTAINTY_PRE_RACE
-    )
+    # Pre-race uncertainty, not the in-race figure: nothing about any car's
+    # pace today has been observed yet.
+    shared = build_shared_context(start_state, rivals, n_simulations, rng, pre_race=True)
 
-    # What the LSTM says about each candidate, used only for the spread
-    # between them; the level comes from the anchor.
-    raw = []
-    for candidate in candidates:
-        tyre_plan = _deterministic_tyre_plan(start_state, candidate)
-        green, _ = predict_trajectory(start_state, tyre_plan)
-        raw.append(float(green.mean() - start_state.field_avg_lap_time_seconds))
-    raw_arr = np.array(raw, dtype=float)
-    if not np.isfinite(raw_arr).any():
-        raw_arr = np.zeros_like(raw_arr)
-    centre = float(np.nanmean(raw_arr[np.isfinite(raw_arr)])) if np.isfinite(raw_arr).any() else 0.0
+    # The spread between candidates comes from measured tyre wear (see
+    # strategy_engine/tyre_pace.py for why not the LSTM); the level comes
+    # from the anchor, the same season form every rival is projected from.
+    wear = wear_rates(int(race_id.split("_")[0]))
+    costs = np.array([plan_cost(_deterministic_tyre_plan(start_state, c), wear) for c in candidates])
+    centre = float(costs.mean())
 
     scored = []
-    for candidate, raw_dev in zip(candidates, raw_arr):
-        differential = 0.0 if not np.isfinite(raw_dev) else raw_dev - centre
+    for candidate, cost in zip(candidates, costs):
         scored.append(
             score_strategy(
                 simulate_strategy(
-                    start_state, candidate, rivals, shared, pace_deviation_override=pace_anchor + differential
+                    start_state, candidate, rivals, shared, pace_deviation_override=pace_anchor + (cost - centre)
                 )
             )
         )

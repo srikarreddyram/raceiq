@@ -77,6 +77,46 @@ made it *more* accurate and thereby made this *worse* — an honest -1.1s/lap
 estimate for a race leader turned into a 42-second cushion and a 96% win
 probability. Both sides now use the same horizon.
 
+**Round 7 — the race is now run lap by lap, with track position.**
+Everything above projected one number per car — its gap to the leader at
+the flag — and ranked those, with a fixed "passing margin" bolted on at
+the end to stop grid order from evaporating. That can't represent the
+thing that makes grid position worth something: a faster car stuck
+behind a slower one, losing time in its dirty air. Each car's race time
+now advances a lap at a time, and on every lap:
+
+- a car within DIRTY_AIR_GAP_SECONDS of the car ahead loses
+  DIRTY_AIR_LOSS_SECONDS (measured: 0.142 s/lap, the same driver's pace
+  within 1 s of a car against in clean air);
+- it only gets past if it's quicker by the circuit's passing delta this
+  lap; otherwise it's held FOLLOW_GAP_SECONDS behind;
+- a car that pits drops back through the order by its pit loss;
+- a safety car can bunch the field behind the leader (switched off —
+  it validated worse; see SC_BUNCHES_FIELD);
+- a retiring rival leaves on its drawn lap.
+
+Every car gets the same lap-to-lap variation (LAP_NOISE_SECONDS, measured
+at 0.405 s in clean air); our car previously had 1.2 s and rivals 0.5 s,
+an asymmetry that would decide random passes. Pace-estimate errors are
+sampled from their measured distributions instead of a bell curve whose
+width outliers had inflated (see PACE_ERROR_PERCENTILES_*), and safety
+cars start at a calibrated rate and last their measured five laps (see
+SC_ONSET_SCALE) instead of firing as independent single laps in 78% of
+races.
+
+Validated against real 2025 finishes, not against the classifiers. In-race
+(strategy_engine/validate_in_race.py — every finisher of nine dry 2025
+races, from 40% distance, on the strategy they actually ran) the old
+aggregate projection scored expected-finish MAE 4.78, Spearman 0.859,
+P(win) Brier 0.144; this scores 2.01, 0.874 and 0.037, beating both the
+Final Race Position classifier (3.16, 0.774) and "finish where you are
+now" (2.30, 0.830). Pre-race (race_plan/grid_sensitivity.py, every
+starter from their real grid slot) front-row and midfield starters now
+land where real ones do — P1-5 average 3.67 vs 3.52 real (the aggregate
+projection said 5.10), P6-10 8.38 vs 8.38 — but back-half starters are
+still 1-1.5 places too optimistic, and per-race rank correlation (0.70)
+is below the aggregate projection's 0.77. That residual is open.
+
 Three more simplifications, documented where they matter:
 - Rivals' future pace projects their *current* trend forward (see
   field.py) rather than simulating their own strategic decisions. Rivals are now
@@ -125,10 +165,14 @@ from strategy_engine.model_features import apply_reference_categoricals
 from strategy_engine.pit_loss import typical_pit_loss_seconds
 from strategy_engine.search.candidates import Strategy
 from strategy_engine.state import RaceState
-from strategy_engine.tyre_baselines import typical_degradation_rate, typical_max_stint_length
+from strategy_engine.tyre_baselines import rival_stop_laps, typical_degradation_rate
 
-LAP_TIME_NOISE_SECONDS = 1.2  # grounded in the Lap Time model's own measured stable-regime RMSE (~1.07s)
-RIVAL_PACE_NOISE_PER_LAP = 0.5
+# Lap-to-lap variation in a car's lap time around its own trend, the same
+# for every car: std of clean-air green-lap residuals from a quadratic
+# trend within each stint, 2022-2025, 41,916 laps. (Replaced 1.2 s for our
+# car — the Lap Time model's RMSE, which is model error, not lap-to-lap
+# variation — and 0.5 s for rivals.)
+LAP_NOISE_SECONDS = 0.405
 # Retired in round 6 (see simulate_strategy): rivals' pace trends used to
 # be projected across only this many laps while this driver's ran the full
 # remaining race, and that asymmetry was the bug. Kept as a named record of
@@ -141,41 +185,99 @@ MAX_TYRE_AGE_FOR_SIMULATION = 35  # near the 99th percentile observed stint leng
 PACE_DEVIATION_CAP_PER_LAP = 2.0  # seconds/lap; see simulate_strategy's use for why this exists
 DEFAULT_DNF_RATE = 0.15  # this project's own dataset-wide average, for circuits with no prior-race history yet
 
-# How wrong a pace estimate typically is, in seconds per lap — the piece
-# this simulation was missing entirely, and the reason PACE_DEVIATION_CAP_PER_LAP
-# had to exist as a band-aid.
+# How wrong a pace estimate is, in seconds per lap — sampled from the
+# MEASURED distribution, not a bell curve. Percentiles 1-99, 2018-2023
+# (training seasons only):
+#   PRE_RACE  (actual race pace) minus (season-to-date form before the race),
+#             2,063 driver-races.
+#   IN_RACE   (pace over laps 21+) minus (pace over laps 4-20), 1,865
+#             driver-races with at least 8 laps in each.
 #
-# Both figures are measured on this project's own data, not assumed:
-#   IN_RACE   std of (a driver's actual pace over the remaining laps) minus
-#             (their observed pace over the first 20), across 3,379
-#             driver-races. Essentially unbiased (mean -0.010).
-#   PRE_RACE  std of (their actual race pace) minus (their season-to-date
-#             average before that race), across 3,060 driver-races. Also
-#             unbiased (mean +0.008).
-#
-# Observing twenty laps barely narrows it, which is itself the finding:
-# race pace genuinely moves around with fuel, tyres, traffic and track
-# evolution. Treating the estimate as exact is what let a 0.5s/lap edge
-# compound into a guaranteed win over a full race distance.
-PACE_ESTIMATE_UNCERTAINTY_IN_RACE = 0.634
-PACE_ESTIMATE_UNCERTAINTY_PRE_RACE = 0.737
+# History, because both earlier versions were wrong in instructive ways.
+# First these were normal draws with a std of 0.737 (pre-race) / 0.634
+# (in-race). The std is dominated by a few huge outliers — damage, a
+# disaster stint — while the middle of the distribution is much tighter
+# (robust spread ~0.46 pre-race). A bell curve that wide hands every car
+# a large chance of a miracle pace day that doesn't exist, which scattered
+# front-runners backwards in every plan. Splitting the std by grid band
+# (0.47 at the front to 1.16 at the back) looked like a finding and was
+# the same artefact: the back bands' extra "spread" was outliers (skew 16
+# for P16-20), and their 5th-95th percentile range matches the front's.
+# The tails here stop at the 1st/99th percentile; real disasters are the
+# retirement draws' job.
+PACE_ERROR_PERCENTILES_PRE_RACE = (
+    -1.149, -1.025, -0.873, -0.800, -0.739, -0.698, -0.671, -0.640, -0.601, -0.561, -0.534, -0.513,
+    -0.500, -0.482, -0.466, -0.447, -0.438, -0.421, -0.408, -0.393, -0.383, -0.367, -0.356, -0.343,
+    -0.332, -0.315, -0.303, -0.293, -0.280, -0.266, -0.257, -0.243, -0.229, -0.219, -0.205, -0.193,
+    -0.184, -0.170, -0.158, -0.146, -0.133, -0.124, -0.115, -0.098, -0.087, -0.077, -0.068, -0.055,
+    -0.050, -0.040, -0.031, -0.021, -0.009, -0.001, 0.015, 0.024, 0.034, 0.047, 0.056, 0.067,
+    0.077, 0.086, 0.098, 0.111, 0.125, 0.133, 0.143, 0.152, 0.167, 0.179, 0.187, 0.194, 0.208,
+    0.220, 0.234, 0.248, 0.263, 0.281, 0.300, 0.319, 0.335, 0.354, 0.379, 0.395, 0.417, 0.435,
+    0.470, 0.489, 0.509, 0.536, 0.572, 0.606, 0.663, 0.711, 0.780, 0.848, 0.938, 1.103, 1.313,
+)
+PACE_ERROR_PERCENTILES_IN_RACE = (
+    -1.158, -0.951, -0.843, -0.790, -0.746, -0.698, -0.674, -0.629, -0.589, -0.556, -0.534, -0.506,
+    -0.474, -0.454, -0.430, -0.419, -0.395, -0.376, -0.355, -0.342, -0.330, -0.314, -0.304, -0.284,
+    -0.272, -0.261, -0.251, -0.245, -0.228, -0.220, -0.202, -0.190, -0.179, -0.171, -0.157, -0.145,
+    -0.133, -0.124, -0.117, -0.105, -0.092, -0.083, -0.075, -0.064, -0.058, -0.049, -0.041, -0.033,
+    -0.023, -0.015, -0.002, 0.005, 0.014, 0.025, 0.029, 0.038, 0.046, 0.054, 0.062, 0.074, 0.083,
+    0.096, 0.107, 0.117, 0.130, 0.142, 0.151, 0.164, 0.173, 0.187, 0.198, 0.211, 0.226, 0.241,
+    0.248, 0.269, 0.277, 0.292, 0.303, 0.313, 0.326, 0.340, 0.353, 0.369, 0.387, 0.408, 0.432,
+    0.471, 0.491, 0.528, 0.560, 0.590, 0.630, 0.680, 0.719, 0.795, 0.868, 0.962, 1.161,
+)
 
-# Track position is sticky: being quicker is not the same as getting past.
-# Ranking purely on projected time gaps assumes free overtaking, which made
-# a grid slot worth almost nothing — pole and P5 planned to the same
-# finishing position, because 5.8s of starting advantage is noise against a
-# race-long pace spread.
-#
-# A rival is therefore only passed if the time advantage exceeds a margin
-# that scales with how hard this circuit actually is to overtake at, using
-# gold.circuit_history.historical_overtaking_rate (measured on-track
-# position changes per green lap: Monaco 0.073, Las Vegas 0.377).
-# OVERTAKE_MARGIN_BASE_SECONDS is calibrated so simulated grid-to-flag
-# movement matches the 2.85 positions actually observed across this
-# project's data — see car_profiles/... no: see the calibration in
-# race_plan/calibrate_overtaking.py.
+
+def sample_pace_errors(rng: np.random.Generator, size: tuple[int, ...], pre_race: bool) -> np.ndarray:
+    table = np.array(PACE_ERROR_PERCENTILES_PRE_RACE if pre_race else PACE_ERROR_PERCENTILES_IN_RACE)
+    u = rng.uniform(0.01, 0.99, size=size)
+    return np.interp(u, np.arange(1, 100) / 100, table)
+
+
+# Safety cars. The Safety Car model predicts P(a safety car is active in the
+# next WINDOW_LAPS laps); converting that straight to an independent per-lap
+# hazard counts every lap of a multi-lap caution as a fresh chance to start
+# one. It put a safety car in 78% of 2024-25 races against 46% actual —
+# a Brier score (0.334) worse than always guessing the base rate. Now: a
+# caution STARTS with the converted hazard times SC_ONSET_SCALE — fitted so
+# the simulated share of races with a safety car matches 2018-2023's 60.5%
+# — and then runs SC_PERIOD_LAPS laps (the measured median, 135 periods).
+# On 2024-25 that scores Brier 0.251, better than the base rate's 0.270;
+# it still over-predicts those two seasons (59% vs 46%), which simply had
+# fewer cautions than the years it was fitted on.
+SC_ONSET_SCALE = 0.60
+SC_PERIOD_LAPS = 5
+
+
+# Track position (round 7). A car within DIRTY_AIR_GAP_SECONDS of the car
+# ahead at the start of a lap loses DIRTY_AIR_LOSS_SECONDS on it — measured,
+# the same driver's median pace within 1.0 s of a car ahead minus in clean
+# air (> 2 s), 1,401 driver-races, 2022-2025. It passes only if it's
+# quicker than that car by the circuit's passing delta on the lap;
+# otherwise it's held FOLLOW_GAP_SECONDS behind. The delta scales with how
+# hard the circuit is to pass at, via
+# gold.circuit_history.historical_overtaking_rate (on-track position
+# changes per green lap: Monaco 0.073, Las Vegas 0.377).
+# PASSING_DELTA_BASE_SECONDS is calibrated against real 2025 finishes, both
+# pre-race (race_plan/grid_sensitivity.py, every starter from their real
+# grid slot) and in-race (strategy_engine/validate_in_race.py, every
+# finisher from 40% distance on their actual strategy). In-race, dry races,
+# expected-finish MAE / Spearman: 0.35 s -> 2.05 / 0.863, 0.6 s -> 2.01 /
+# 0.874, 1.0 s -> 1.97 / 0.872. Flat between 0.6 and 1.0 on both checks;
+# 0.6 has the best rank correlation.
+DIRTY_AIR_GAP_SECONDS = 1.0
+DIRTY_AIR_LOSS_SECONDS = 0.142
+FOLLOW_GAP_SECONDS = 0.5
+# Safety-car bunching: tried and switched OFF on evidence. Compressing
+# everyone behind the leader under a caution is what happens on track, but
+# against real 2025 finishes (strategy_engine/validate_in_race.py, dry
+# races) it made in-race predictions worse — expected-finish MAE 2.16 vs
+# 2.01, Spearman 0.857 vs 0.874, P(win) Brier 0.042 vs 0.037. Kept behind
+# this switch so the result can be re-checked, not silently deleted.
+SC_BUNCHES_FIELD = False
+SC_BUNCH_GAP_SECONDS = 0.8  # spacing behind the leader when bunching is on
 MEDIAN_OVERTAKING_RATE = 0.17
-OVERTAKE_MARGIN_BASE_SECONDS = 20.0
+PASSING_DELTA_BASE_SECONDS = 0.6
+PASSING_DELTA_BOUNDS = (0.15, 4.0)
 
 
 @dataclass
@@ -196,10 +298,14 @@ class SharedContext:
 
     n_laps: int
     sc_occurs: np.ndarray  # shape (n_simulations, n_laps)
-    noise: np.ndarray  # shape (n_simulations, n_laps)
-    rival_retires: np.ndarray  # shape (n_simulations, n_rivals), bool — see build_shared_context
+    noise: np.ndarray  # shape (n_simulations, n_laps, 1 + n_rivals); column 0 is our car
+    rival_retire_lap: np.ndarray  # shape (n_simulations, n_rivals), lap index they retire on; n_laps = never
     pace_error: np.ndarray  # shape (n_simulations,), seconds per lap — see build_shared_context
     rival_pace_error: np.ndarray  # shape (n_simulations, n_rivals), same units
+
+    @property
+    def rival_retires(self) -> np.ndarray:
+        return self.rival_retire_lap < self.n_laps
 
 
 def _safety_car_row(state: RaceState, lap_number: int) -> pd.DataFrame:
@@ -284,14 +390,18 @@ def build_shared_context(
     rivals: list[RivalTrend],
     n_simulations: int,
     rng: np.random.Generator,
-    pace_uncertainty: float = PACE_ESTIMATE_UNCERTAINTY_IN_RACE,
+    pre_race: bool = False,
 ) -> SharedContext:
     """Computed once per race state, reused for every candidate strategy —
-    the safety-car draws, lap-time noise, and rival-retirement draws,
-    shared so every strategy is evaluated under identical random
+    the safety-car draws, lap-time noise, retirement draws and pace-estimate
+    errors, shared so every strategy is evaluated under identical random
     conditions (common random numbers).
+
+    `pre_race` (race_plan/) draws pace errors from the pre-race
+    distribution: nothing about any car's pace today has been seen yet.
     """
     n_laps = state.race_total_laps - state.current_lap
+    n_rivals = len(rivals)
     safety_car_model = load_latest_model("safety_car_probability")
     sc_probs = np.empty(n_laps)
     for i, lap_number in enumerate(range(state.current_lap + 1, state.race_total_laps + 1)):
@@ -307,57 +417,120 @@ def build_shared_context(
         # per-lap hazard: if 1-(1-h)^W = p_window, then h = 1-(1-p_window)^(1/W).
         sc_probs[i] = 1 - (1 - p_window) ** (1 / SAFETY_CAR_WINDOW_LAPS)
 
-    sc_occurs = rng.random((n_simulations, n_laps)) < sc_probs[None, :]
-    noise = rng.normal(0, LAP_TIME_NOISE_SECONDS, size=(n_simulations, n_laps))
+    # A caution starts (see SC_ONSET_SCALE) and then runs SC_PERIOD_LAPS laps.
+    onsets = rng.random((n_simulations, n_laps)) < (SC_ONSET_SCALE * sc_probs)[None, :]
+    running = np.cumsum(onsets, axis=1)
+    running[:, SC_PERIOD_LAPS:] -= running[:, :-SC_PERIOD_LAPS].copy()
+    sc_occurs = running > 0
+    noise = rng.normal(0, LAP_NOISE_SECONDS, size=(n_simulations, n_laps, 1 + n_rivals)).astype(np.float32)
 
     # A rival's chance of retiring somewhere in the *remaining* laps, from
     # this circuit's historical full-race DNF rate via the same "at least
     # one event over a window" conversion used for the safety-car model
-    # above (p_full_race is the "window", n_laps/race_total_laps of it is
-    # the fraction still ahead of us). One draw per (simulation, rival),
-    # identical across every candidate strategy — a rival's real-world
-    # retirement doesn't depend on what tyre strategy WE choose. See
-    # module docstring for why this exists: without it, a driver who is
-    # already last has no modeled chance of inheriting a place.
+    # above. The retirement LAP is drawn uniformly over the remaining
+    # distance: in a lap-by-lap race a retirement matters from the lap it
+    # happens, not just at the flag. Our own retirement isn't modelled —
+    # the engine recommends a strategy assuming this driver finishes.
     p_dnf_full_race = (
         state.historical_dnf_rate
         if state.historical_dnf_rate is not None and not pd.isna(state.historical_dnf_rate)
         else DEFAULT_DNF_RATE
     )
     p_dnf_remaining = 1 - (1 - p_dnf_full_race) ** (n_laps / state.race_total_laps)
-    rival_retires = rng.random((n_simulations, len(rivals))) < p_dnf_remaining
+    retires = rng.random((n_simulations, n_rivals)) < p_dnf_remaining
+    retire_lap = np.where(retires, rng.integers(0, max(n_laps, 1), size=(n_simulations, n_rivals)), n_laps)
 
-    # One pace-estimate error per simulation, drawn here rather than inside
-    # simulate_strategy so every candidate strategy is judged under the SAME
-    # draw — the same common-random-numbers discipline the safety car and
-    # retirement draws already follow. Without that, two candidates would be
-    # compared partly on which got the luckier view of the car's pace.
-    #
-    # It multiplies the whole remaining distance, so it dominates: at the
-    # pre-race figure over 57 laps it contributes ~42s of spread against
-    # ~9s from lap-to-lap noise. That is the correct order of magnitude —
-    # before a race you genuinely do not know a car's pace to better than
-    # a few tenths a lap, and the simulation now says so instead of
-    # reporting 100% win probabilities.
-    pace_error = rng.normal(0.0, pace_uncertainty, size=n_simulations)
-
-    # Rivals get the same per-lap pace uncertainty, for the same reason
-    # round 6 made the projection horizons match: an estimate this driver
-    # is uncertain about is equally uncertain for everyone else. Previously
-    # only RIVAL_PACE_NOISE_PER_LAP applied to them, which over a race is
-    # ~3.8s against this driver's ~42s — an 11x asymmetry that made a
-    # finishing position mostly a lottery on our own pace draw and left the
-    # grid, worth ~16s from pole to P16, unable to compete with it.
-    rival_pace_error = rng.normal(0.0, pace_uncertainty, size=(n_simulations, max(len(rivals), 1)))
+    # One pace-estimate error per simulation per car, drawn here so every
+    # candidate strategy is judged under the SAME draw. It multiplies the
+    # whole remaining distance and so dominates the spread — correctly: you
+    # don't know a car's pace to better than a few tenths a lap. Rivals
+    # carry the same uncertainty as our car (round 6's lesson: an estimate
+    # this driver is uncertain about is equally uncertain for everyone).
+    errors = sample_pace_errors(rng, (n_simulations, 1 + n_rivals), pre_race)
 
     return SharedContext(
         n_laps=n_laps,
         sc_occurs=sc_occurs,
         noise=noise,
-        rival_retires=rival_retires,
-        pace_error=pace_error,
-        rival_pace_error=rival_pace_error,
+        rival_retire_lap=retire_lap,
+        pace_error=errors[:, 0],
+        rival_pace_error=errors[:, 1:],
     )
+
+
+def passing_delta_seconds(overtaking_rate: float | None) -> float:
+    """How much quicker than the car ahead a car must be on a lap to get
+    past — larger where passing is historically rare."""
+    if overtaking_rate is None or not np.isfinite(overtaking_rate) or overtaking_rate <= 0:
+        overtaking_rate = MEDIAN_OVERTAKING_RATE
+    delta = PASSING_DELTA_BASE_SECONDS * (MEDIAN_OVERTAKING_RATE / overtaking_rate)
+    return float(np.clip(delta, *PASSING_DELTA_BOUNDS))
+
+
+def run_race(
+    start_times: np.ndarray,
+    pace_per_lap: np.ndarray,
+    noise: np.ndarray,
+    pit_loss: np.ndarray,
+    retire_lap: np.ndarray,
+    sc_occurs: np.ndarray,
+    passing_delta: float,
+) -> np.ndarray:
+    """Run the remaining race lap by lap for every simulation at once, and
+    return each car's final race time (np.inf for a retirement).
+
+    start_times   (n_cars,)                   gap to the leader now
+    pace_per_lap  (n_sims, n_cars)            seconds/lap vs the field average
+    noise         (n_sims, n_laps, n_cars)    lap-to-lap variation
+    pit_loss      (n_sims, n_laps, n_cars)    time lost on each car's pit laps
+    retire_lap    (n_sims, n_cars)            lap index a car retires on; n_laps = never
+    sc_occurs     (n_sims, n_laps)            safety car on that lap
+    """
+    n_sims, n_laps, n_cars = noise.shape
+    times = np.broadcast_to(start_times.astype(np.float64), (n_sims, n_cars)).copy()
+    rows = np.arange(n_sims)[:, None]
+
+    for lap in range(n_laps):
+        active = retire_lap > lap
+        # Road order at the start of the lap; retired cars sort to the back.
+        order = np.argsort(np.where(active, times, np.inf), axis=1, kind="stable")
+        start = times[rows, order]
+        proposed = start + (pace_per_lap + noise[:, lap, :] + pit_loss[:, lap, :])[rows, order]
+        live = active[rows, order]
+
+        # Dirty air: following closely at the start of the lap costs time.
+        close = np.zeros_like(live)
+        # Retired cars sit at +inf; inf - inf is NaN, so compare only
+        # between cars that are both still running.
+        both_live = live[:, 1:] & live[:, :-1]
+        gaps = np.where(both_live, start[:, 1:] - np.where(both_live, start[:, :-1], 0.0), np.inf)
+        close[:, 1:] = gaps < DIRTY_AIR_GAP_SECONDS
+        proposed = proposed + np.where(close & live, DIRTY_AIR_LOSS_SECONDS, 0.0)
+
+        # Held up: working front to back, a car that would end the lap
+        # within the follow gap of the rearmost car ahead of it — without
+        # being quicker by the passing delta — is held behind it. A car in
+        # the pits this lap has a huge proposed time and drops back freely.
+        rear = proposed[:, 0].copy()
+        for k in range(1, n_cars):
+            mine = proposed[:, k]
+            held = live[:, k] & (mine >= rear - passing_delta) & (mine < rear + FOLLOW_GAP_SECONDS)
+            mine = np.where(held, rear + FOLLOW_GAP_SECONDS, mine)
+            proposed[:, k] = mine
+            rear = np.where(live[:, k], np.maximum(rear, mine), rear)
+
+        # A safety car bunches everyone still running behind the leader,
+        # keeping the order. (Its slowing of every car equally doesn't move
+        # anyone relative to anyone else, so it isn't added as time.)
+        sc = sc_occurs[:, lap]
+        if SC_BUNCHES_FIELD and sc.any():
+            leader = proposed[:, :1]
+            bunched = leader + np.arange(n_cars)[None, :] * SC_BUNCH_GAP_SECONDS
+            proposed = np.where(sc[:, None] & live, np.minimum(proposed, bunched), proposed)
+
+        times[rows, order] = np.where(live, proposed, np.inf)
+
+    return times
 
 
 def simulate_strategy(
@@ -367,36 +540,36 @@ def simulate_strategy(
     shared: SharedContext,
     pace_deviation_override: float | None = None,
 ) -> SimulationResult:
-    """`pace_deviation_override` replaces this driver's per-lap pace edge
-    instead of deriving it from the LSTM. race_plan/ uses it so that both
-    sides of the comparison are estimated the same way: rivals there are
-    projected from season form, and scoring our driver from the LSTM while
-    scoring rivals from season form is exactly the two-estimator asymmetry
-    that round 6 (above) was about. Left None in-race, where the LSTM and
-    the rivals' live pace trends are both measured off the same session.
+    """`pace_deviation_override` is our car's per-lap pace edge. Every
+    production caller passes it: in-race, engine.candidate_pace_overrides
+    (recent pace made tyre-age-neutral plus the strategy's measured tyre
+    cost, the same treatment rivals get in tyre_pace.tyre_adjusted_rivals);
+    pre-race, race_plan's season-form anchor. Left None, it falls back to
+    the LSTM's absolute pace — kept for direct experiments only, since that
+    is the two-estimator asymmetry strategy_engine/tyre_pace.py explains.
     """
     n_simulations = shared.sc_occurs.shape[0]
+    n_laps = shared.n_laps
+    n_cars = 1 + len(rivals)
     is_pit_lap = _deterministic_pit_plan(state, strategy)
-    pit_loss = typical_pit_loss_seconds(state.circuit_id)
+    pit_loss_s = typical_pit_loss_seconds(state.circuit_id)
 
-    # A safety car slows the whole field by roughly the same amount — the
-    # leader is under the same caution as everyone else — so it doesn't
-    # move this driver's *gap to the leader* on its own. Only three things
-    # legitimately do that here: this strategy's own pit stop cost (only
-    # this driver stops, discounted if it lands under a simulated SC — PRD
-    # 12.6's "pitting under a safety car is free track position"),
-    # idiosyncratic lap-to-lap noise, and — unlike every earlier attempt in
-    # this module's history — this strategy's actual predicted green-flag
-    # pace vs. the field average, now that the LSTM oracle
-    # (lstm_oracle.py) can produce that trajectory in one forward pass
-    # with no autoregressive chaining to go unstable. See the module
-    # docstring for the four rounds of bugs that came from trying this
-    # with a chained single-step model instead.
-    pit_time_loss = np.zeros((n_simulations, shared.n_laps))
+    # This strategy's own stops, discounted when one lands under a simulated
+    # safety car — PRD 12.6's "pitting under a safety car is free track
+    # position".
+    pit_loss = np.zeros((n_simulations, n_laps, n_cars), dtype=np.float32)
     for i, scheduled in enumerate(is_pit_lap):
         if scheduled:
-            discount = np.where(shared.sc_occurs[:, i], SC_PIT_DISCOUNT, 1.0)
-            pit_time_loss[:, i] = pit_loss * discount
+            pit_loss[:, i, 0] = pit_loss_s * np.where(shared.sc_occurs[:, i], SC_PIT_DISCOUNT, 1.0)
+
+    # A rival's own strategy isn't simulated (see field.py), but it's
+    # charged the stops it would need for no stint to outrun the circuit's
+    # typical stint length (tyre_baselines.rival_stop_laps) — first a field
+    # that never stopped, then one that stopped at most once, both
+    # penalised every strategy of ours that pits.
+    for j, rival in enumerate(rivals, start=1):
+        for stop in rival_stop_laps(state.circuit_id, rival.compound, rival.tyre_age, n_laps):
+            pit_loss[:, stop, j] = pit_loss_s
 
     if pace_deviation_override is not None:
         pace_deviation_per_lap = float(pace_deviation_override)
@@ -404,129 +577,40 @@ def simulate_strategy(
         tyre_plan = _deterministic_tyre_plan(state, strategy)
         green_times, _sc_times = predict_trajectory(state, tyre_plan)
         pace_deviation_per_lap = float(green_times.mean() - state.field_avg_lap_time_seconds)
-    # A wet-race snapshot (long INTERMEDIATE stint, track drying) surfaced a
-    # prediction implying ~1.7s/lap of sustained improvement — physically
-    # not impossible on a drying track, but a large enough claim, for a
-    # combination of covariates sparse enough in training, that it
-    # deserves a skeptical bound rather than blind trust: at N=5,000 sims
-    # it made an actual race leader's win probability a flat, noise-proof
-    # 100%. Clipped to a generous per-lap bound that's still well above the
-    # ~0.5-1s/lap differences seen between reasonable candidate strategies
-    # in normal (dry, in-distribution) scenarios.
-    # A NaN here is not survivable and must never reach the ranking below.
-    # `field_avg_lap_time_seconds` is genuinely NaN on lap 1 of a race —
-    # FastF1 records no lap time for the standing-start lap, so the whole
-    # field average for that lap is undefined — and any arithmetic on it
-    # stays NaN all the way to `our_final_gap`. Every NaN comparison
-    # evaluates False, so `(rival_gaps < our_gap).sum()` counts zero rivals
-    # ahead and the driver is scored P1 in *every* simulation: a 100% win
-    # probability generated purely by missing data. Treat an unknown pace
-    # edge as no edge, which is the neutral assumption, not the flattering
-    # one.
+    # A NaN pace edge is not survivable: `field_avg_lap_time_seconds` is
+    # genuinely NaN on lap 1 (FastF1 records no standing-start lap time), and
+    # a NaN anywhere here used to compare False against every rival and
+    # score this driver P1 in every simulation. Unknown edge = no edge.
     if not np.isfinite(pace_deviation_per_lap):
         pace_deviation_per_lap = 0.0
+    # A wet-race snapshot once produced a ~1.7 s/lap sustained edge from a
+    # covariate mix sparse in training; clipped to a generous but finite
+    # per-lap bound (see the module docstring, round 5).
     pace_deviation_per_lap = float(np.clip(pace_deviation_per_lap, -PACE_DEVIATION_CAP_PER_LAP, PACE_DEVIATION_CAP_PER_LAP))
 
-    # **Round 6 — the horizons on the two sides of the comparison have to
-    # match.** They didn't: this driver's pace deviation was projected
-    # across every remaining lap, while each rival's was capped at
-    # RIVAL_TREND_HORIZON_LAPS. Finishing position depends only on the
-    # *relative* gap, so an asymmetric horizon hands whichever car is
-    # fastest relative to the field an advantage no rival is ever allowed
-    # to answer.
-    #
-    # It stayed hidden while the LSTM under-predicted pace deltas, and
-    # surfaced when retraining made it MORE accurate: at Bahrain 2025 lap
-    # 20 the model put the leader at -1.145s/lap versus the field (his
-    # actual lap that moment was -1.007, so the estimate was sound), which
-    # over 37 laps compounded into a 42-second gain — larger than the
-    # entire P1-to-P20 spread of ~39s. Every candidate therefore "won"
-    # ~96% of the time against a Win Probability classifier saying 24%.
-    # The cross-checks in recommendation/reasoning.py are what caught it.
-    #
-    # Both sides now project across the full remaining race. The
-    # alternative — capping both at RIVAL_TREND_HORIZON_LAPS — is equally
-    # symmetric but measurably worse: it truncates the pace signal at 10
-    # laps while noise keeps accumulating over all 37 (variance grows with
-    # every lap run, so that part can't be capped), which buried the same
-    # leader at 6.8% win and an expected P6.5. Checked against the two
-    # independently-trained classifiers on three real drivers spanning the
-    # front, midfield and back of the grid, full-race projection agreed
-    # far better (mean win-probability disagreement 3.1pp vs 6.5pp), and
-    # it's the more defensible assumption physically: a genuinely faster
-    # car stays faster, where mean-reverting pace to the field average
-    # after ten laps claims the field converges mid-race, which it doesn't.
-    # Per simulation, not a single number: the point estimate plus that
-    # simulation's share of how wrong such estimates typically are.
-    pace_deviation = (pace_deviation_per_lap + shared.pace_error) * shared.n_laps
+    # Round 6: both sides project their pace across the full remaining race,
+    # each with its share of the same pace-estimate uncertainty.
+    pace_per_lap = np.empty((n_simulations, n_cars))
+    pace_per_lap[:, 0] = pace_deviation_per_lap + shared.pace_error
+    for j, rival in enumerate(rivals, start=1):
+        trend = rival.recent_pace_delta if np.isfinite(rival.recent_pace_delta) else 0.0
+        pace_per_lap[:, j] = trend + shared.rival_pace_error[:, j - 1]
 
-    cumulative_deviation = pace_deviation + (shared.noise + pit_time_loss).sum(axis=1)
-    our_final_gap = state.gap_to_leader + cumulative_deviation
+    start_times = np.array([state.gap_to_leader] + [r.gap_to_leader for r in rivals], dtype=float)
+    start_times = np.where(np.isfinite(start_times), start_times, np.nanmax(start_times[np.isfinite(start_times)], initial=0.0))
+    retire_lap = np.concatenate([np.full((n_simulations, 1), n_laps), shared.rival_retire_lap], axis=1)
 
-    rng = np.random.default_rng()  # rival noise doesn't need to be paired across strategies
-
-    def _rival_owed_pit_loss(rival: RivalTrend) -> float:
-        # A rival's own future strategy isn't simulated (see field.py), which
-        # previously meant every rival was implicitly modeled as "never pits
-        # again" for the rest of the race — a real bias found via the Win
-        # Probability model cross-check (recommendation/reasoning.py): a
-        # race leader whose recommended strategy involves a stop was
-        # charged the full pit-loss cost while rivals on comparably worn
-        # tyres were charged nothing for the stop they'd also need. If this
-        # rival's current tyre age would exceed a realistic stint length
-        # for their compound at this circuit before the race ends, charge
-        # them one pit stop's worth of time too — undiscounted for a
-        # simulated safety car, since we have no way of knowing when in
-        # their own (unmodeled) strategy that stop would land relative to
-        # this simulation's SC draws.
-        laps_until_needed = typical_max_stint_length(state.circuit_id, rival.compound) - rival.tyre_age
-        return pit_loss if laps_until_needed < shared.n_laps else 0.0
-
-    rival_final_gaps = np.stack(
-        [
-            rival.gap_to_leader
-            # Same horizon as this driver's own pace_deviation above — see
-            # round 6 there for why the two must match.
-            + shared.n_laps * rival.recent_pace_delta
-            + _rival_owed_pit_loss(rival)
-            + rng.normal(0, RIVAL_PACE_NOISE_PER_LAP * np.sqrt(shared.n_laps), size=n_simulations)
-            for rival in rivals
-        ],
-        axis=0,
-    )  # shape (n_rivals, n_simulations)
-
-    # Their share of the same pace-estimate uncertainty this driver carries.
-    if rivals:
-        rival_final_gaps = rival_final_gaps + shared.rival_pace_error[:, : len(rivals)].T * shared.n_laps
-
-    # A retired rival (shared.rival_retires, drawn once per race state and
-    # reused for every candidate — see build_shared_context) no longer
-    # finishes ahead of anyone, regardless of the gap they were projected
-    # to hold. shape (n_simulations, n_rivals) -> (n_rivals, n_simulations)
-    # to match rival_final_gaps.
-    rival_final_gaps = np.where(shared.rival_retires.T, np.inf, rival_final_gaps)
-
-    # Belt and braces after the NaN guard above: a non-finite gap on either
-    # side would otherwise compare False and silently flatter this driver.
-    rival_final_gaps = np.where(np.isfinite(rival_final_gaps), rival_final_gaps, np.inf)
-    our_final_gap = np.where(np.isfinite(our_final_gap), our_final_gap, np.inf)
-
-    # Track position is sticky (see OVERTAKE_MARGIN_BASE_SECONDS). A rival
-    # who is ahead keeps the place unless this driver beats them by the
-    # circuit's passing margin; one who is behind only gets by if THEY
-    # clear it. At Monaco that margin is large enough that the grid order
-    # largely survives, which is the whole point.
-    overtaking_rate = state.historical_overtaking_rate
-    if overtaking_rate is None or not np.isfinite(overtaking_rate) or overtaking_rate <= 0:
-        overtaking_rate = MEDIAN_OVERTAKING_RATE
-    passing_margin = OVERTAKE_MARGIN_BASE_SECONDS * (MEDIAN_OVERTAKING_RATE / overtaking_rate)
-
-    started_ahead = np.array(
-        [rival.gap_to_leader < state.gap_to_leader for rival in rivals], dtype=bool
-    )[:, None]
-    threshold = np.where(started_ahead, our_final_gap[None, :] + passing_margin, our_final_gap[None, :] - passing_margin)
-
-    final_position = 1 + (rival_final_gaps < threshold).sum(axis=0)
+    final_times = run_race(
+        start_times,
+        pace_per_lap,
+        shared.noise,
+        pit_loss,
+        retire_lap,
+        shared.sc_occurs,
+        passing_delta_seconds(state.historical_overtaking_rate),
+    )
+    ours = final_times[:, :1]
+    final_position = 1 + (final_times[:, 1:] < ours).sum(axis=1)
 
     return SimulationResult(
         strategy=strategy,

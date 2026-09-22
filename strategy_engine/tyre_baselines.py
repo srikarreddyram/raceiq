@@ -110,3 +110,28 @@ def typical_degradation_rate(circuit_id: str, compound: str, exclude_race_id: st
         return float(compound_rates[compound])
 
     return _DEFAULT_DEGRADATION_RATE
+
+
+RIVAL_FINAL_COMPOUND = "HARD"
+
+
+def rival_stop_laps(circuit_id: str, compound: str, tyre_age: float, n_laps: int) -> list[int]:
+    """Lap indices (0-based, within the remaining n_laps) at which a rival
+    is assumed to stop: as many stops as it takes for no stint to outrun
+    typical_max_stint_length — the same feasibility rule our own candidate
+    strategies obey. The first stop comes when the current tyres run out;
+    each later stint is on RIVAL_FINAL_COMPOUND.
+
+    This used to be at most ONE stop per rival. In a multi-stop race
+    (Bahrain) or a wet-to-dry one (Silverstone 2025) our car was charged
+    every real stop it made while each rival paid for one, and the
+    simulation predicted our car finishing 2.2 places worse than it did, on
+    average (strategy_engine/validate_in_race.py).
+    """
+    stops = []
+    next_stop = typical_max_stint_length(circuit_id, compound) - tyre_age
+    stint = max(typical_max_stint_length(circuit_id, RIVAL_FINAL_COMPOUND), 1.0)
+    while next_stop < n_laps:
+        stops.append(int(max(next_stop, 0)))
+        next_stop = max(next_stop, 0) + stint
+    return stops

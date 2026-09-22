@@ -82,3 +82,24 @@ def build_field_snapshot_from_gold(race_id: str, lap_number: int, exclude_driver
         )
         for r in rows.itertuples()
     ]
+
+
+def driver_recent_pace(race_id: str, lap_number: int, driver_id: str) -> float | None:
+    """One driver's recent pace, measured exactly as every rival's
+    `recent_pace_delta` is: mean `pace_delta_this_lap` over the last
+    _TREND_WINDOW_LAPS non-pit laps. The engine anchors our own car's pace
+    to this so both sides of the comparison come from one estimator (see
+    engine.candidate_pace_overrides)."""
+    con = get_connection()
+    try:
+        row = con.execute(
+            """
+            SELECT AVG(pace_delta_this_lap)
+            FROM gold.race_features
+            WHERE race_id = ? AND driver_id = ? AND lap_number BETWEEN ? AND ? AND NOT is_pit_lap
+            """,
+            [race_id, driver_id, lap_number - _TREND_WINDOW_LAPS + 1, lap_number],
+        ).fetchone()
+    finally:
+        con.close()
+    return None if row is None or row[0] is None or pd.isna(row[0]) else float(row[0])
