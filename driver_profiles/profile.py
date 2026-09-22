@@ -25,16 +25,15 @@ import math
 import duckdb
 import pandas as pd
 
+from models.common.data import is_classified
+
 WET_COMPOUNDS = ("INTERMEDIATE", "WET")
 
 # Ergast's `position` is finishing ORDER, populated for retirements too
-# (a lap-3 retirement reads P22). Whether a driver was classified is in
-# `status`: finishers, lapped finishers ("+1 Lap", or "Lapped" in the
-# 2026 feed), and nothing else. Finishing averages use classified results
-# only; head-to-head uses order, where a retirement correctly counts as
-# finishing behind.
-def is_classified(status) -> bool:
-    return isinstance(status, str) and (status == "Finished" or status == "Lapped" or status.startswith("+"))
+# (a lap-3 retirement reads P22); whether a driver was classified comes from
+# `status` — models/common/data.py's is_classified. Finishing averages use
+# classified results only; head-to-head uses order, where a retirement
+# correctly counts as finishing behind.
 OUTLIER_FACTOR = 1.07  # laps beyond 107% of the race's median green lap: traffic, damage, spins
 MIN_WET_LAPS = 10  # below this a wet split is anecdote, reported as null
 

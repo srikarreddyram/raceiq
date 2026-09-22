@@ -128,8 +128,8 @@ def run() -> bool:
     print("=== Rebuilding Gold layer ===")
     rebuild_gold()
 
-    # The Lap Time model reads gold.circuit_geometry. Rebuilt from the
-    # cached reference-lap telemetry (fetching it is a separate, slow,
+    # gold.circuit_geometry backs the Circuit View and geometry experiments
+    # (no model reads it today). Rebuilt from the cached reference-lap telemetry (fetching it is a separate, slow,
     # rate-limited step: track_maps/reconstruction/fetch.py); with no cache
     # the existing table is left as it is rather than replaced by nothing.
     if any(RAW_TRACK_MAPS.glob("*/meta.json")):

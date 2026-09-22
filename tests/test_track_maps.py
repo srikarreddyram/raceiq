@@ -78,24 +78,25 @@ def test_map_endpoint_serves_overlay():
     assert len(m.sector_boundaries) == 2
 
 
-def test_lap_time_model_uses_geometry_instead_of_circuit_id():
+def test_lap_time_model_uses_circuit_id_not_geometry():
+    # Geometry was tried and reverted (models/lap_time/train.py): it acted as
+    # a circuit fingerprint and failed 2-3x at unlike-anything circuits.
     from models.common.circuit_geometry import CIRCUIT_GEOMETRY_COLUMNS
     from models.common.registry import load_latest_model
     from models.lap_time.train import FEATURE_COLUMNS
 
-    assert "circuit_id" not in FEATURE_COLUMNS
-    assert set(CIRCUIT_GEOMETRY_COLUMNS) <= set(FEATURE_COLUMNS)
-    # Whatever the oracle loads must have been trained on exactly this list,
-    # or strategy_engine/oracles.py builds rows the model can't read.
+    assert "circuit_id" in FEATURE_COLUMNS
+    assert not set(CIRCUIT_GEOMETRY_COLUMNS) & set(FEATURE_COLUMNS)
+    # Whatever the oracle loads must have been trained on exactly this list.
     assert list(load_latest_model("lap_time_prediction").feature_name_) == FEATURE_COLUMNS
 
 
-def test_every_raced_circuit_reaches_the_lap_time_model_with_geometry():
-    # A circuit first raced in 2026 isn't in the categorical vocabulary; a
-    # geometry lookup after that conversion silently gave Madring no
-    # geometry and a 2.9 s/lap bias. Every row, every season, must have it.
-    from models.lap_time.train import prepare_dataset
+def test_every_raced_circuit_has_a_track_map():
+    # The Circuit View and any geometry experiment need a map for every
+    # circuit raced since 2018 — Madring included.
+    from models.common.circuit_geometry import add_circuit_geometry
+    from models.common.data import load_race_features
 
-    df = prepare_dataset()
+    df = add_circuit_geometry(load_race_features())
     missing = df[df["lap_length_m"].isna()]
-    assert missing.empty, f"no geometry for: {sorted(missing['race_id'].unique())[:10]}"
+    assert missing.empty, f"no geometry for: {sorted(missing['circuit_id'].unique())}"

@@ -38,21 +38,35 @@ def load_race_features(con: duckdb.DuckDBPyConnection | None = None) -> pd.DataF
     return df
 
 
-def load_final_classifications(con: duckdb.DuckDBPyConnection | None = None) -> pd.DataFrame:
-    """One row per (season, round, driver_id) -> final race position.
+def is_classified(status) -> bool:
+    """Whether a driver was classified in a race, from Ergast's `status`:
+    finishers, and lapped finishers ("+1 Lap", or "Lapped" in the 2026
+    feed). Everything else — Retired, Accident, Disqualified, Did not
+    start — wasn't."""
+    return isinstance(status, str) and (status == "Finished" or status == "Lapped" or status.startswith("+"))
 
-    Ergast's `position` is only populated for classified finishers;
-    `positionText` covers DNF/DSQ/etc. as non-numeric codes, which is why
-    this is a left-as-null numeric column rather than something coerced
-    into a fake position.
+
+def load_final_classifications(con: duckdb.DuckDBPyConnection | None = None) -> pd.DataFrame:
+    """One row per (season, round, driver_id): `final_position` and
+    `classified`.
+
+    `final_position` is Ergast's `position`, which in this data is the
+    finishing ORDER and is populated for every starter, retirements
+    included (a lap-3 retirement reads P22). An earlier version of this
+    docstring said non-classified drivers had a null position; they
+    don't, and the Final Race Position model was trained on retirement
+    order because of it. `classified` says which rows are real finishing
+    positions — see models/race_position/train.py for how it's used.
     """
     owns_connection = con is None
     con = con or get_connection()
     try:
-        return con.execute(
-            "SELECT season, round, driver_id, position AS final_position "
+        df = con.execute(
+            "SELECT season, round, driver_id, position AS final_position, status "
             "FROM bronze.ergast_results"
         ).df()
     finally:
         if owns_connection:
             con.close()
+    df["classified"] = df["status"].map(is_classified)
+    return df.drop(columns="status")

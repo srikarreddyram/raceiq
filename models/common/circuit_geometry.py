@@ -1,6 +1,11 @@
 """Circuit geometry as model features — gold.circuit_geometry, built by
 track_maps/ (`uv run python -m track_maps.run`).
 
+No production model uses these today. They were shipped in the Lap Time
+model and reverted after leave-one-circuit-out evaluation showed them
+acting as a circuit fingerprint (see models/lap_time/train.py). The lookup
+stays for track_maps/evaluate_lift.py and any future experiment.
+
 One lookup shared by training (prepare_dataset) and inference
 (strategy_engine/oracles.py), so the two cannot disagree about which
 columns exist or how a circuit with no map is represented (NaN, never 0).

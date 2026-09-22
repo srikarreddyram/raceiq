@@ -41,15 +41,19 @@ Result (one split, LightGBM, fixed seed; error = MAE or 1 - PR-AUC):
   pit_stop                     +0.3%                         +2.3%
   safety_car                  -15.0%                        +21.7%
 
-Only Lap Time improves in both settings, so only Lap Time got the columns
-(replacing circuit_id — see models/lap_time/train.py). Safety Car is the
-cautionary one: a big "lift" on seen circuits that reverses on unseen
-ones, meaning the numeric geometry was acting as a circuit fingerprint to
-memorise ~30 circuits' safety-car history, not describing anything that
-generalises.
+Lap Time looked like it improved in both settings and briefly shipped
+with geometry. It didn't hold: `--loco` (one held-out circuit at a time)
+has geometry better at only 10 of 24 circuits, median +3.3%, and 2-3x
+worse at Hungaroring, Monza and Baku — the pooled unseen number above was
+a few big wins at high-error circuits outweighing the rest. So no model
+uses geometry; see models/lap_time/train.py for the full record. Safety
+Car showed the same failure more plainly: a big "lift" on seen circuits
+that reverses on unseen ones. In both, the numbers were a circuit
+fingerprint, not a description that transfers.
 
 Usage:
-    uv run python -m track_maps.evaluate_lift
+    uv run python -m track_maps.evaluate_lift           # all models, K-fold
+    uv run python -m track_maps.evaluate_lift --loco    # Lap Time, one circuit at a time
 """
 
 from __future__ import annotations
@@ -82,10 +86,10 @@ MODELS = [
 def _load(module_name: str) -> tuple[pd.DataFrame, list[str], str, pd.Series | None]:
     module = importlib.import_module(f"models.{module_name}.train")
     df = module.prepare_dataset()
-    # Lap Time's prepare_dataset already attaches geometry, from the raw
-    # circuit_id; re-adding it here would look it up via the categorical.
-    if "lap_length_m" not in df.columns:
-        df = add_circuit_geometry(df)
+    # Seasons used here are all <= 2025, whose circuits are all in the
+    # categorical vocabulary, so looking geometry up via circuit_id is safe
+    # (a 2026-only circuit would be NaN — see models/common/circuit_geometry.py).
+    df = add_circuit_geometry(df)
     # The baseline is the model's feature list WITHOUT geometry and WITH
     # circuit_id — the pre-track_maps model, whatever production now uses.
     base = [c for c in module.FEATURE_COLUMNS if c not in GEOMETRY_COLUMNS]
@@ -195,6 +199,31 @@ def _report(results: pd.DataFrame) -> None:
         print()
 
 
+def leave_one_circuit_out(name: str = "lap_time") -> pd.DataFrame:
+    """Every 2025 circuit held out of training on its own, scored with and
+    without geometry. The K-fold average above can hide a split verdict;
+    this gives one result per circuit, so "geometry helps new circuits"
+    can be read as a win rate rather than one pooled number."""
+    df, base, target, module = _load(name)
+    stable_fn = getattr(module, "stable_regime_mask", None)
+    blind = [c for c in base if c != "circuit_id"]
+    rows = []
+    for circuit in sorted(df.loc[df["season"] == TEST_SEASON, "circuit_id"].astype(str).unique()):
+        held = df["circuit_id"].astype(str) == circuit
+        f_train = df[df["season"].isin(TRAIN_SEASONS) & ~held]
+        f_val = df[(df["season"] == VALIDATION_SEASON) & ~held]
+        f_test = df[(df["season"] == TEST_SEASON) & held]
+        stable = stable_fn(f_test) if stable_fn else None
+        blind_err = _fit_score(f_train, f_val, f_test, blind, target, False, stable)
+        geo_err = _fit_score(f_train, f_val, f_test, blind + GEOMETRY_COLUMNS, target, False, stable)
+        rows.append({"circuit": circuit, "blind": blind_err, "geometry": geo_err, "change_pct": (geo_err - blind_err) / blind_err * 100})
+        print(f"{circuit:22s} blind {blind_err:.3f}  geometry {geo_err:.3f}  {rows[-1]['change_pct']:+6.1f}%", flush=True)
+    out = pd.DataFrame(rows)
+    wins = int((out["geometry"] < out["blind"]).sum())
+    print(f"\ngeometry better at {wins} of {len(out)} held-out circuits; median change {out['change_pct'].median():+.1f}%")
+    return out
+
+
 def main() -> None:
     rows = []
     for name, classifier in MODELS:
@@ -206,4 +235,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    if "--loco" in sys.argv:
+        leave_one_circuit_out()
+    else:
+        main()

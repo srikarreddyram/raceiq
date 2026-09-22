@@ -51,6 +51,15 @@ FEATURE_COLUMNS = NUMERIC_FEATURES + BOOLEAN_FEATURES + CATEGORICAL_COLUMNS
 def prepare_dataset() -> pd.DataFrame:
     df = load_race_features()
     df = add_race_outcome_targets(df)
+    # Classified finishers only. Ergast's position is finishing order and
+    # gives retirements a place (P15-P22), so this model used to be trained
+    # to predict "retires on lap 40" as "finishes P19" from laps where
+    # nothing about the car's state said so. It's the strategy engine's
+    # cross-check on expected finish, and the Monte Carlo it checks assumes
+    # our driver finishes (rivals may retire — they're modelled). So the
+    # target is where a driver finishes GIVEN they finish; retirement risk
+    # is a separate question.
+    df = df[df["classified"].fillna(False).astype(bool)]
     df = df.dropna(subset=[TARGET, "current_position"])
     df[TARGET] = df[TARGET].astype(int)
     for col in BOOLEAN_FEATURES:

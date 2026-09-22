@@ -34,7 +34,6 @@ import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-from models.common.circuit_geometry import CIRCUIT_GEOMETRY_COLUMNS, add_circuit_geometry
 from models.common.data import load_race_features
 from models.common.features import CATEGORICAL_COLUMNS, apply_categorical_dtypes
 from models.common.splits import temporal_split
@@ -95,28 +94,31 @@ BOOLEAN_FEATURES = [
     "traffic_flag",
     "rainfall_flag",
 ]
-# Circuit geometry (PRD Section 10.3) REPLACES the circuit_id categorical
-# here, on measured evidence: track_maps/evaluate_lift.py found that
-# describing the circuit beats naming it by 3.6% stable-regime MAE on
-# circuits seen in training, and by 8.0% on circuits held out of training
-# entirely — the Madring case, a venue with no history, where circuit_id
-# is an unknown category and says nothing. Keeping circuit_id alongside
-# the geometry was worse than either (a 30-way categorical invites trees to
-# memorise each circuit instead of generalising across similar ones). The
-# same experiment found no lift for Tyre Degradation or Pit Stop, and a
-# Safety Car "lift" on seen circuits that collapsed on unseen ones —
-# memorisation, not learning — so none of those got these columns.
+# Circuit geometry (PRD Section 10.3) was tried here in place of circuit_id
+# and REVERTED, on evidence that took three rounds to get right:
 #
-# The first REAL unseen circuit didn't bear the unseen-circuit result out.
-# On the 2026 season (never trained on) this model and the circuit_id one
-# it replaced tie — stable-lap MAE 0.804 vs 0.799, this one better at 8 of
-# 14 races — but at Madring, the only venue new in 2026, it is worse: 1.74
-# vs 0.95, running +1.5 s slow on average. One circuit is one sample, and
-# Madring's geometry is from detected corners (FastF1 has no official list
-# for it yet), but it's the case this change was meant for, so it's
-# recorded here rather than left for monitoring to rediscover.
-LAP_TIME_CATEGORICALS = [c for c in CATEGORICAL_COLUMNS if c != "circuit_id"]
-FEATURE_COLUMNS = NUMERIC_FEATURES + CIRCUIT_GEOMETRY_COLUMNS + BOOLEAN_FEATURES + LAP_TIME_CATEGORICALS
+# 1. track_maps/evaluate_lift.py, pooled K-fold: geometry beat circuit_id by
+#    3.6% on seen circuits and "8% on unseen ones". Shipped on that.
+# 2. 2026, never trained on: a tie overall (0.804 vs 0.799 stable-lap MAE),
+#    but worse at Madring, the only new venue (1.74 vs 0.95).
+# 3. Leave-one-circuit-out (`evaluate_lift --loco`), one verdict per
+#    circuit: geometry better at only 10 of 24, median +3.3% worse, and
+#    catastrophic at the circuits least like any other — Hungaroring
+#    +241%, Monza +193%, Baku +99%. The pooled "-8%" had come from a few
+#    large wins at high-error circuits outweighing everything else.
+#
+# Geometry was acting as a circuit fingerprint, not a description that
+# transfers — the same failure found for Safety Car. An unknown circuit_id
+# fails safe (it contributes nothing); a fingerprint that lands in the
+# wrong region doesn't. For a strategy tool whose first new-venue case is
+# Madring, a 3.6% gain on known circuits isn't worth a 2-3x miss on the
+# next unknown one. Geometry stays on the dashboard (GET /circuits/{id}/map).
+#
+# Retrained with MAE early stopping (below), the circuit_id model beat the
+# geometry one on every held-out measure that isn't a seen-circuit test:
+# 2026 stable-lap MAE 0.784 vs 0.804, and at Madring 0.70 vs 1.74.
+LAP_TIME_CATEGORICALS = CATEGORICAL_COLUMNS
+FEATURE_COLUMNS = NUMERIC_FEATURES + BOOLEAN_FEATURES + CATEGORICAL_COLUMNS
 
 # Flags used only to build the "stable regime" evaluation slice below — not
 # used as model features, since they describe the *next* lap and would be
@@ -139,13 +141,6 @@ def prepare_dataset() -> pd.DataFrame:
     df = df[df["next_red_flag_active"] != 1]
     for col in BOOLEAN_FEATURES:
         df[col] = df[col].astype(int)
-    # Geometry BEFORE the categorical conversion: the category vocabulary
-    # is built from eligible seasons only (see models/common/features.py),
-    # so a circuit first raced in 2026 — Madring — becomes NaN there, and a
-    # lookup after it silently gave every Madring lap no geometry at all.
-    # Monitoring caught it: stable-lap MAE 3.7 s at Madring against ~0.7
-    # everywhere else, with a -2.9 s bias.
-    df = add_circuit_geometry(df)
     df = apply_categorical_dtypes(df, CATEGORICAL_COLUMNS)
     return df
 
@@ -171,6 +166,14 @@ def _rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 def train_lightgbm(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame) -> dict:
     model = lgb.LGBMRegressor(
         objective="regression",
+        # Early stopping watches validation MAE, not the default RMSE. RMSE
+        # here is dominated by pit, safety-car and red-flag laps no
+        # current-lap feature can foresee, so it stops improving early and
+        # cut training at ~180 trees — measured on identical features,
+        # stable-lap test MAE 0.773 stopping on RMSE vs 0.684 on MAE, with
+        # test RMSE unchanged (4.930 vs 4.939). MAE is also the metric this
+        # model's stable-regime criterion is judged on.
+        metric="l1",
         n_estimators=1000,
         learning_rate=0.05,
         num_leaves=63,
@@ -185,7 +188,6 @@ def train_lightgbm(train: pd.DataFrame, val: pd.DataFrame, test: pd.DataFrame) -
         train[FEATURE_COLUMNS],
         train[TARGET],
         eval_set=[(val[FEATURE_COLUMNS], val[TARGET])],
-        eval_metric="rmse",
         categorical_feature=LAP_TIME_CATEGORICALS,
         callbacks=[lgb.early_stopping(50, verbose=False)],
     )
