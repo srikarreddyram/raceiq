@@ -12,18 +12,22 @@ import { C, F } from "../../design/tokens";
 
 const SEASONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018];
 
-export function useTeamSelection(initialTeam = "ferrari", initialSeason = 2026) {
+export function useTeamSelection(initialSeason = 2026) {
   const [season, setSeason] = useState(initialSeason);
-  const [teamId, setTeamId] = useState(initialTeam);
+  const [teamId, setTeamId] = useState("");
   const teams = useAsync(() => api.teams(season), [season]);
+  const standings = useAsync(() => api.standings(season), [season]);
 
-  // A team that didn't race this season (Sauber -> Audi) falls back to the
-  // first team on that grid rather than requesting a profile that 404s.
+  // Default to the constructors' championship leader — never a hard-coded
+  // team — and fall back to them when the chosen team didn't race that
+  // season (Sauber -> Audi).
   useEffect(() => {
-    if (teams.data && !teams.data.some((t) => t.team_id === teamId) && teams.data.length) {
-      setTeamId(teams.data[0].team_id);
+    if (!teams.data?.length) return;
+    if (!teams.data.some((t) => t.team_id === teamId)) {
+      const leader = standings.data?.constructors.find((c) => teams.data!.some((t) => t.team_id === c.id));
+      setTeamId(leader?.id ?? teams.data[0].team_id);
     }
-  }, [teams.data, teamId]);
+  }, [teams.data, standings.data, teamId]);
 
   const ready = Boolean(teams.data?.some((t) => t.team_id === teamId));
   const teamName = teams.data?.find((t) => t.team_id === teamId)?.name ?? teamId;

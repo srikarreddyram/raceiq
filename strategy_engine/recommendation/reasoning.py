@@ -9,6 +9,8 @@ rather than a generic placeholder sentence.
 
 from __future__ import annotations
 
+import math
+
 from strategy_engine.oracles import (
     predict_expected_finish_now,
     predict_remaining_tyre_life,
@@ -40,12 +42,16 @@ def build_reasoning(
         f"~{remaining_life:.0f} laps of life left."
     )
 
-    if state.historical_sc_rate is not None:
+    # `is not None` isn't enough: a first-time venue (Madring 2026) carries
+    # NaN here, which printed as "nan% of prior races".
+    if state.historical_sc_rate is not None and math.isfinite(state.historical_sc_rate):
         bullets.append(
             f"Safety car has appeared in {state.historical_sc_rate * 100:.0f}% of prior races at this circuit."
         )
+    else:
+        bullets.append("First race at this circuit: no safety-car or track-temperature history to lean on.")
 
-    if state.condition_delta is not None:
+    if state.condition_delta is not None and math.isfinite(state.condition_delta):
         direction = "above" if state.condition_delta > 0 else "below"
         bullets.append(
             f"Track temperature is {abs(state.condition_delta):.1f}C {direction} this circuit's historical average."

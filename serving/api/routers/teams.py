@@ -8,9 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from car_profiles.degradation_curves import team_tyre_report
 from car_profiles.season_profile import season_profile, seasons_for
+from car_profiles.speed_profile import speed_profile
 from models.tyre_degradation.trace import remaining_life_trace
 from serving.api.db import get_db
-from serving.api.schemas import CarProfileResponse, Team, TyreReport
+from serving.api.schemas import CarProfileResponse, SpeedProfile, Team, TyreReport
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
@@ -65,4 +66,15 @@ def get_tyres(
     try:
         return TyreReport(**team_tyre_report(team_id, season), remaining_life=remaining_life_trace(team_id, season))
     except (LookupError, ValueError) as exc:
+        raise HTTPException(404, detail=str(exc)) from exc
+
+
+@router.get("/speed", response_model=SpeedProfile)
+def get_speed(
+    season: int = Query(..., description="2023 onwards — the seasons OpenF1 has speed-trap data for"),
+    con: duckdb.DuckDBPyConnection = Depends(get_db),
+) -> SpeedProfile:
+    try:
+        return SpeedProfile(**speed_profile(con, season))
+    except LookupError as exc:
         raise HTTPException(404, detail=str(exc)) from exc

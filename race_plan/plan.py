@@ -55,7 +55,7 @@ from strategy_engine.tyre_pace import plan_cost, wear_rates
 from strategy_engine.simulation.monte_carlo import (
     _deterministic_tyre_plan,
     build_shared_context,
-    simulate_strategy,
+    simulate_strategies,
 )
 from strategy_engine.state import DRY_COMPOUNDS, RaceState
 from strategy_engine.tyre_baselines import typical_max_stint_length
@@ -69,6 +69,9 @@ WINDOW_SCORE_TOLERANCE = 0.05
 # Wet compounds are a response to conditions on the day, not something a
 # dry-weather plan should pre-commit to.
 PLANNABLE_STARTING_COMPOUNDS = DRY_COMPOUNDS
+
+SCREEN_SIMULATIONS = 150
+PLAN_FINALISTS = 24
 
 
 @dataclass
@@ -153,7 +156,7 @@ def _cached_race_features() -> pd.DataFrame:
     return load_race_features()
 
 
-def _starting_state(race_id: str, driver_id: str) -> tuple[RaceState, pd.DataFrame]:
+def _starting_state(race_id: str, driver_id: str, grid_override: int | None = None) -> tuple[RaceState, pd.DataFrame]:
     df = _cached_race_features()
     race_rows = df[df.race_id == race_id]
     if race_rows.empty:
@@ -178,7 +181,9 @@ def _starting_state(race_id: str, driver_id: str) -> tuple[RaceState, pd.DataFra
         fallback = race_rows.loc[~race_rows.is_pit_lap, "field_avg_lap_time_seconds"].median()
         state = replace(state, field_avg_lap_time_seconds=float(fallback))
 
-    grid = _grid_position(race_id, driver_id)
+    # `grid_override` is the "what if we start P8?" question a strategist asks
+    # before qualifying is known.
+    grid = grid_override if grid_override is not None else _grid_position(race_id, driver_id)
     if grid is not None:
         # The plan is made before the start, so track position is the grid
         # slot — a pre-race plan that inherited lap 1's measured gaps would
@@ -213,10 +218,15 @@ def _plan_for_starting_compound(
     """Score every candidate strategy that starts on `compound`.
 
     `pace_anchor` is this driver's season-to-date pace delta — the same
-    quantity the rivals are projected from. The LSTM still decides how the
-    candidates differ from each other, but its absolute level is replaced
-    by the anchor, so our driver and the field are measured with one
-    estimator rather than two.
+    quantity the rivals are projected from. Measured tyre wear decides how
+    the candidates differ from each other (strategy_engine/tyre_pace.py),
+    and the anchor sets the level, so our driver and the field are
+    measured with one estimator rather than two.
+
+    Two-stage, like the in-race engine: every candidate is screened at
+    SCREEN_SIMULATIONS, and the best PLAN_FINALISTS are re-scored at the
+    full count. The pit windows are read off those finalists, which is
+    where every near-optimal candidate lives. One plan took 22 s before.
     """
     start_state = replace(
         state,
@@ -233,26 +243,26 @@ def _plan_for_starting_compound(
         return None
 
     rng = np.random.default_rng(seed)
-    # Pre-race uncertainty, not the in-race figure: nothing about any car's
-    # pace today has been observed yet.
-    shared = build_shared_context(start_state, rivals, n_simulations, rng, pre_race=True)
 
     # The spread between candidates comes from measured tyre wear (see
     # strategy_engine/tyre_pace.py for why not the LSTM); the level comes
     # from the anchor, the same season form every rival is projected from.
     wear = wear_rates(int(race_id.split("_")[0]))
     costs = np.array([plan_cost(_deterministic_tyre_plan(start_state, c), wear) for c in candidates])
-    centre = float(costs.mean())
+    pace = dict(zip(candidates, pace_anchor + (costs - costs.mean())))
 
-    scored = []
-    for candidate, cost in zip(candidates, costs):
-        scored.append(
-            score_strategy(
-                simulate_strategy(
-                    start_state, candidate, rivals, shared, pace_deviation_override=pace_anchor + (cost - centre)
-                )
-            )
-        )
+    def score_all(strategies: list, n: int) -> list[StrategyScore]:
+        # Pre-race uncertainty, not the in-race figure: nothing about any
+        # car's pace today has been observed yet.
+        shared = build_shared_context(start_state, rivals, n, rng, pre_race=True)
+        results = simulate_strategies(start_state, strategies, rivals, shared, [pace[c] for c in strategies])
+        return [score_strategy(r) for r in results]
+
+    finalists = candidates
+    if len(candidates) > PLAN_FINALISTS and n_simulations > SCREEN_SIMULATIONS:
+        screened = sorted(zip(score_all(candidates, SCREEN_SIMULATIONS), candidates), key=lambda x: -x[0].strategy_score)
+        finalists = [c for _, c in screened[:PLAN_FINALISTS]]
+    scored = score_all(finalists, n_simulations)
     scored.sort(key=lambda s: s.strategy_score, reverse=True)
     return scored[0], scored
 
@@ -289,10 +299,12 @@ def _windows_from_candidates(best: StrategyScore, scored: list[StrategyScore]) -
     return stops
 
 
-def build_race_plan(race_id: str, driver_id: str, n_simulations: int = 2000, seed: int = 42) -> RacePlan:
+def build_race_plan(
+    race_id: str, driver_id: str, n_simulations: int = 2000, seed: int = 42, grid_override: int | None = None
+) -> RacePlan:
     from race_plan.field import build_pre_race_field
 
-    state, race_rows = _starting_state(race_id, driver_id)
+    state, race_rows = _starting_state(race_id, driver_id, grid_override)
     # Pre-race field, not the in-race snapshot: see race_plan/field.py for
     # what reusing the lap-1 snapshot does to this plan.
     rivals = build_pre_race_field(race_id, exclude_driver_id=driver_id)

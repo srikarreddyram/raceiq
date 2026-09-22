@@ -20,6 +20,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { Logo } from "../design/Logo";
 import { C, DISPLAY, F, NUM } from "../design/tokens";
 import { SPRING } from "../design/Animations";
 import { EdgeBezel } from "../design/chrome";
@@ -209,7 +210,7 @@ function Backdrop({ section }: { section: number }) {
         }}
       />
 
-      {/* The broadcast slash: a red band and a thin carbon one, skewed. */}
+      {/* The broadcast slash: carbon, edged in F1 red, skewed. */}
       <div
         style={{
           position: "absolute",
@@ -224,8 +225,8 @@ function Backdrop({ section }: { section: number }) {
           gap: 14,
         }}
       >
-        <div style={{ width: 10, background: C.carbon }} />
-        <div style={{ flex: 1, background: `linear-gradient(180deg, ${DEFAULT_ACCENT} 0%, #B80500 100%)` }} />
+        <div style={{ width: 12, background: DEFAULT_ACCENT }} />
+        <div style={{ flex: 1, background: C.carbon }} />
       </div>
 
       {/* Scrims — lighten toward the copy side so text reads over the grid. */}
@@ -312,9 +313,7 @@ function BrandMark() {
         gap: 14,
       }}
     >
-      <div style={{ ...DISPLAY, fontStyle: "italic", fontSize: 28, color: C.text }}>
-        RACE<span style={{ color: C.accent }}>IQ</span>
-      </div>
+      <Logo height={30} />
       <div style={{ width: 1, height: 18, background: C.edge }} />
       <div style={{ fontFamily: F.mono, fontWeight: 700, fontSize: 11, letterSpacing: "0.14em", color: C.faint }}>
         STRATEGY INTELLIGENCE

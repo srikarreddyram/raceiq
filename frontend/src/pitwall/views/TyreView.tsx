@@ -35,7 +35,7 @@ import { useAsync } from "../../api/useAsync";
 import { Card, EmptyState, ErrorState, SectionLabel, Segmented, Stat, TableSkeleton } from "../../design/primitives";
 import { C, DISPLAY, F, NUM, compoundColor } from "../../design/tokens";
 import { AXIS_LINE, AXIS_TICK, GRID_STROKE, TOOLTIP_STYLE } from "../components/chartStyle";
-import { TeamPicker, useTeamSelection } from "../components/TeamPicker";
+import type { useTeamSelection } from "../components/TeamPicker";
 
 const perLap = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(3)}`);
 
@@ -310,21 +310,12 @@ function RemainingLife({ report }: { report: TyreReport }) {
   );
 }
 
-export function TyreView() {
-  const team = useTeamSelection();
+export function TyreSection({ team }: { team: ReturnType<typeof useTeamSelection> }) {
   const report = useAsync(() => api.tyres(team.teamId, team.season), [team.teamId, team.season, team.ready], team.ready);
   const data = report.data;
 
-  // Team-scoped: the whole view takes the team's colour (compound colours stay Pirelli's).
   return (
-    <div style={accentVars(teamAccent(team.teamId))}>
-      <SectionLabel>Tyre view</SectionLabel>
-      <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 20px", letterSpacing: "0.02em" }}>
-        Degradation, compound by compound
-      </h1>
-
-      <TeamPicker state={team} />
-
+    <div>
       {(team.teams.error || report.error) && <ErrorState message={(team.teams.error || report.error)!} />}
       {report.loading && <TableSkeleton rows={6} columns={3} />}
 

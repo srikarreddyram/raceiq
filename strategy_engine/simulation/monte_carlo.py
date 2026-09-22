@@ -533,6 +533,107 @@ def run_race(
     return times
 
 
+def _our_pit_loss(state: RaceState, strategy: Strategy, shared: SharedContext, pit_loss_s: float) -> np.ndarray:
+    """This strategy's own stops, discounted when one lands under a simulated
+    safety car — PRD 12.6's "pitting under a safety car is free track
+    position". Shape (n_simulations, n_laps)."""
+    out = np.zeros(shared.sc_occurs.shape, dtype=np.float32)
+    for i, scheduled in enumerate(_deterministic_pit_plan(state, strategy)):
+        if scheduled:
+            out[:, i] = pit_loss_s * np.where(shared.sc_occurs[:, i], SC_PIT_DISCOUNT, 1.0)
+    return out
+
+
+def _clean_pace(pace: float) -> float:
+    # A NaN pace edge is not survivable: `field_avg_lap_time_seconds` is
+    # genuinely NaN on lap 1 (FastF1 records no standing-start lap time), and
+    # a NaN anywhere here used to compare False against every rival and
+    # score this driver P1 in every simulation. Unknown edge = no edge. A
+    # wet-race snapshot once produced a ~1.7 s/lap sustained edge from a
+    # covariate mix sparse in training; clipped to a generous but finite
+    # per-lap bound (see the module docstring, round 5).
+    if not np.isfinite(pace):
+        pace = 0.0
+    return float(np.clip(pace, -PACE_DEVIATION_CAP_PER_LAP, PACE_DEVIATION_CAP_PER_LAP))
+
+
+# Rows (candidates x simulations) per batched race — bounds memory at
+# ~60 MB for a 60-lap, 21-car race while keeping the per-lap Python loop
+# running over as much work at once as possible.
+BATCH_ROWS = 12_000
+
+
+def simulate_strategies(
+    state: RaceState,
+    strategies: list[Strategy],
+    rivals: list[RivalTrend],
+    shared: SharedContext,
+    pace_overrides: list[float],
+) -> list[SimulationResult]:
+    """Simulate several candidate strategies at once.
+
+    Candidates are stacked along the simulation axis and raced together, so
+    run_race's per-lap loop runs once per batch instead of once per
+    candidate — the loop, not the arithmetic, is what a race costs. Every
+    candidate sees the same shared draws (common random numbers), tiled.
+    """
+    n_simulations = shared.sc_occurs.shape[0]
+    n_laps = shared.n_laps
+    n_cars = 1 + len(rivals)
+    pit_loss_s = typical_pit_loss_seconds(state.circuit_id)
+
+    # The field: rivals charged the stops their stints need
+    # (tyre_baselines.rival_stop_laps), each projecting its pace (already
+    # tyre-adjusted by the caller, tyre_pace.tyre_adjusted_rivals) plus its
+    # share of the pace-estimate uncertainty. Round 6: both sides project
+    # across the full remaining race.
+    field_pit = np.zeros((n_simulations, n_laps, n_cars), dtype=np.float32)
+    for j, rival in enumerate(rivals, start=1):
+        for stop in rival_stop_laps(state.circuit_id, rival.compound, rival.tyre_age, n_laps):
+            field_pit[:, stop, j] = pit_loss_s
+    field_pace = np.zeros((n_simulations, n_cars))
+    for j, rival in enumerate(rivals, start=1):
+        trend = rival.recent_pace_delta if np.isfinite(rival.recent_pace_delta) else 0.0
+        field_pace[:, j] = trend + shared.rival_pace_error[:, j - 1]
+
+    start_times = np.array([state.gap_to_leader] + [r.gap_to_leader for r in rivals], dtype=float)
+    finite = start_times[np.isfinite(start_times)]
+    start_times = np.where(np.isfinite(start_times), start_times, finite.max() if finite.size else 0.0)
+    retire_lap = np.concatenate([np.full((n_simulations, 1), n_laps), shared.rival_retire_lap], axis=1)
+    delta = passing_delta_seconds(state.historical_overtaking_rate)
+
+    results: list[SimulationResult] = []
+    chunk = max(1, BATCH_ROWS // max(n_simulations, 1))
+    for start in range(0, len(strategies), chunk):
+        batch = strategies[start : start + chunk]
+        b = len(batch)
+        pit = np.tile(field_pit, (b, 1, 1))
+        pace = np.tile(field_pace, (b, 1))
+        for i, (strategy, override) in enumerate(zip(batch, pace_overrides[start : start + chunk])):
+            rows = slice(i * n_simulations, (i + 1) * n_simulations)
+            pit[rows, :, 0] = _our_pit_loss(state, strategy, shared, pit_loss_s)
+            pace[rows, 0] = _clean_pace(override) + shared.pace_error
+        final_times = run_race(
+            start_times,
+            pace,
+            np.tile(shared.noise, (b, 1, 1)),
+            pit,
+            np.tile(retire_lap, (b, 1)),
+            np.tile(shared.sc_occurs, (b, 1)),
+            delta,
+        )
+        positions = 1 + (final_times[:, 1:] < final_times[:, :1]).sum(axis=1)
+        for i, strategy in enumerate(batch):
+            results.append(
+                SimulationResult(
+                    strategy=strategy,
+                    final_positions=positions[i * n_simulations : (i + 1) * n_simulations],
+                    safety_car_occurred=shared.sc_occurs.any(axis=1),
+                )
+            )
+    return results
+
+
 def simulate_strategy(
     state: RaceState,
     strategy: Strategy,
@@ -540,7 +641,9 @@ def simulate_strategy(
     shared: SharedContext,
     pace_deviation_override: float | None = None,
 ) -> SimulationResult:
-    """`pace_deviation_override` is our car's per-lap pace edge. Every
+    """One strategy — simulate_strategies with a batch of one.
+
+    `pace_deviation_override` is our car's per-lap pace edge. Every
     production caller passes it: in-race, engine.candidate_pace_overrides
     (recent pace made tyre-age-neutral plus the strategy's measured tyre
     cost, the same treatment rivals get in tyre_pace.tyre_adjusted_rivals);
@@ -548,72 +651,7 @@ def simulate_strategy(
     the LSTM's absolute pace — kept for direct experiments only, since that
     is the two-estimator asymmetry strategy_engine/tyre_pace.py explains.
     """
-    n_simulations = shared.sc_occurs.shape[0]
-    n_laps = shared.n_laps
-    n_cars = 1 + len(rivals)
-    is_pit_lap = _deterministic_pit_plan(state, strategy)
-    pit_loss_s = typical_pit_loss_seconds(state.circuit_id)
-
-    # This strategy's own stops, discounted when one lands under a simulated
-    # safety car — PRD 12.6's "pitting under a safety car is free track
-    # position".
-    pit_loss = np.zeros((n_simulations, n_laps, n_cars), dtype=np.float32)
-    for i, scheduled in enumerate(is_pit_lap):
-        if scheduled:
-            pit_loss[:, i, 0] = pit_loss_s * np.where(shared.sc_occurs[:, i], SC_PIT_DISCOUNT, 1.0)
-
-    # A rival's own strategy isn't simulated (see field.py), but it's
-    # charged the stops it would need for no stint to outrun the circuit's
-    # typical stint length (tyre_baselines.rival_stop_laps) — first a field
-    # that never stopped, then one that stopped at most once, both
-    # penalised every strategy of ours that pits.
-    for j, rival in enumerate(rivals, start=1):
-        for stop in rival_stop_laps(state.circuit_id, rival.compound, rival.tyre_age, n_laps):
-            pit_loss[:, stop, j] = pit_loss_s
-
-    if pace_deviation_override is not None:
-        pace_deviation_per_lap = float(pace_deviation_override)
-    else:
-        tyre_plan = _deterministic_tyre_plan(state, strategy)
-        green_times, _sc_times = predict_trajectory(state, tyre_plan)
-        pace_deviation_per_lap = float(green_times.mean() - state.field_avg_lap_time_seconds)
-    # A NaN pace edge is not survivable: `field_avg_lap_time_seconds` is
-    # genuinely NaN on lap 1 (FastF1 records no standing-start lap time), and
-    # a NaN anywhere here used to compare False against every rival and
-    # score this driver P1 in every simulation. Unknown edge = no edge.
-    if not np.isfinite(pace_deviation_per_lap):
-        pace_deviation_per_lap = 0.0
-    # A wet-race snapshot once produced a ~1.7 s/lap sustained edge from a
-    # covariate mix sparse in training; clipped to a generous but finite
-    # per-lap bound (see the module docstring, round 5).
-    pace_deviation_per_lap = float(np.clip(pace_deviation_per_lap, -PACE_DEVIATION_CAP_PER_LAP, PACE_DEVIATION_CAP_PER_LAP))
-
-    # Round 6: both sides project their pace across the full remaining race,
-    # each with its share of the same pace-estimate uncertainty.
-    pace_per_lap = np.empty((n_simulations, n_cars))
-    pace_per_lap[:, 0] = pace_deviation_per_lap + shared.pace_error
-    for j, rival in enumerate(rivals, start=1):
-        trend = rival.recent_pace_delta if np.isfinite(rival.recent_pace_delta) else 0.0
-        pace_per_lap[:, j] = trend + shared.rival_pace_error[:, j - 1]
-
-    start_times = np.array([state.gap_to_leader] + [r.gap_to_leader for r in rivals], dtype=float)
-    start_times = np.where(np.isfinite(start_times), start_times, np.nanmax(start_times[np.isfinite(start_times)], initial=0.0))
-    retire_lap = np.concatenate([np.full((n_simulations, 1), n_laps), shared.rival_retire_lap], axis=1)
-
-    final_times = run_race(
-        start_times,
-        pace_per_lap,
-        shared.noise,
-        pit_loss,
-        retire_lap,
-        shared.sc_occurs,
-        passing_delta_seconds(state.historical_overtaking_rate),
-    )
-    ours = final_times[:, :1]
-    final_position = 1 + (final_times[:, 1:] < ours).sum(axis=1)
-
-    return SimulationResult(
-        strategy=strategy,
-        final_positions=final_position,
-        safety_car_occurred=shared.sc_occurs.any(axis=1),
-    )
+    if pace_deviation_override is None:
+        green_times, _sc_times = predict_trajectory(state, _deterministic_tyre_plan(state, strategy))
+        pace_deviation_override = float(green_times.mean() - state.field_avg_lap_time_seconds)
+    return simulate_strategies(state, [strategy], rivals, shared, [pace_deviation_override])[0]

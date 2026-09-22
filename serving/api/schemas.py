@@ -426,3 +426,130 @@ class ProfileConfidencePoint(BaseModel):
     p75_relative_halfwidth: float
     distinct_share: float
     pairs: int
+
+
+class WaitWindowOut(BaseModel):
+    open_lap: int
+    pull_the_plug_lap: int
+    latest_safe_lap: int
+    caution_saving_seconds: float
+    per_lap_caution_probability: float
+    has_window: bool
+    reason: str
+
+
+class PlannedStopOut(BaseModel):
+    stop_number: int
+    compound: str
+    window_open: int
+    window_close: int
+    nominal_lap: int
+    wait: WaitWindowOut | None
+
+
+class StartingOption(BaseModel):
+    starting_compound: str
+    plan: str
+    strategy_score: float
+    expected_finish: float
+    expected_points: float
+
+
+class TyreSetOut(BaseModel):
+    compound: str
+    laps_run: int
+    first_session: str
+    sessions: list[str]
+
+
+class TyrePlanOut(BaseModel):
+    allocation: dict[str, int]
+    race_reserved: dict[str, int]
+    quali_reserved: dict[str, int]
+    practice_budget: dict[str, int]
+    used_in_practice: list[TyreSetOut]
+    warnings: list[str]
+
+
+class RaceConditions(BaseModel):
+    track_temp: float
+    air_temp: float
+    rain_expected: bool
+    circuit_baseline_track_temp: float | None
+    historical_sc_rate: float | None
+    historical_overtaking_rate: float | None
+    pit_loss_seconds: float
+    cold_start_circuit: bool  # no prior races here: circuit priors are unknown
+
+
+class RacePlanResponse(BaseModel):
+    """The race weekend planner — race_plan/. Everything a strategist needs
+    for one driver at one race: conditions, tyre sets, starting compound,
+    pit windows and the hold-for-a-caution window per stop."""
+
+    race_id: str
+    race_name: str
+    circuit_id: str
+    circuit_name: str | None
+    date: date_type
+    driver_id: str
+    team_id: str
+    grid_position: int
+    actual_grid_position: int | None
+    total_laps: int
+    n_simulations: int
+    conditions: RaceConditions
+    starting_compound: str
+    compound_sequence: list[str]
+    compound_choice_is_decisive: bool
+    stops: list[PlannedStopOut]
+    expected_finish: float
+    win_probability: float
+    points_probability: float
+    expected_points: float
+    starting_options: list[StartingOption]
+    tyres: TyrePlanOut
+
+
+class StandingEntry(BaseModel):
+    id: str
+    name: str
+    team_id: str | None
+    points: float
+    wins: int
+
+
+class Standings(BaseModel):
+    season: int
+    through_race_id: str
+    drivers: list[StandingEntry]
+    constructors: list[StandingEntry]
+
+
+class SpeedRace(BaseModel):
+    race_id: str
+    circuit_name: str
+    trap_kph: float
+    trap_delta_kph: float
+    pace_delta_s: float
+
+
+class TeamSpeed(BaseModel):
+    team_id: str
+    name: str
+    races: int
+    top_speed_delta_kph: float
+    top_speed_ci95: list[float] | None
+    median_trap_kph: float
+    pace_delta_s: float
+    pace_ci95: list[float] | None
+    reading: str
+    by_race: list[SpeedRace]
+
+
+class SpeedProfile(BaseModel):
+    """Straight-line speed against overall pace — car_profiles/speed_profile.py."""
+
+    season: int
+    races: int
+    teams: list[TeamSpeed]

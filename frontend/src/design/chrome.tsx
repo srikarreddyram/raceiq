@@ -5,10 +5,11 @@
  */
 
 import { C } from "./tokens";
-import { DEFAULT_ACCENT } from "./theme";
 
-const BRAND_PRIMARY = DEFAULT_ACCENT; // F1 red
-const BRAND_SECONDARY = C.carbon; // F1 carbon black
+// Edges in carbon, not red: the always-on frame should be quiet, with F1
+// red saved for the mark and active states.
+const BRAND_PRIMARY = C.carbon;
+const BRAND_SECONDARY = C.carbon;
 
 /**
  * A persistent colour frame down both edges of the viewport — fixed

@@ -26,13 +26,11 @@ import {
   ZAxis,
 } from "recharts";
 import { api } from "../../api/client";
-import type { PitPlan, SimulationOutcome } from "../../api/types";
-import { useAsync } from "../../api/useAsync";
-import { Card, EmptyState, ErrorState, SectionLabel, Stat, TableSkeleton } from "../../design/primitives";
-import { accentVars, teamAccent } from "../../design/theme";
+import type { PitPlan, SimulationOutcome, StrategyRecommendation } from "../../api/types";
+import { Card, ErrorState, SectionLabel, Stat } from "../../design/primitives";
 import { C, DISPLAY, F, NUM, compoundColor } from "../../design/tokens";
 import { FinishDistribution } from "../components/FinishDistribution";
-import { RaceSelector, useRaceSelection } from "../components/RaceSelector";
+import type { RaceSelection } from "../components/RaceSelector";
 
 const COMPOUNDS = ["SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET"];
 
@@ -175,28 +173,19 @@ function PitPlanBuilder({
   );
 }
 
-export function SimulationView() {
-  const state = useRaceSelection();
-  const { selection, ready } = state;
-  const [customPlan, setCustomPlan] = useState<PitPlan>([[30, "HARD"]]);
+/**
+ * The simulator half of the Race Strategy page: the engine's candidates on a
+ * risk-vs-reward scatter, and a builder to run your own pit plan through
+ * the same simulation against the same race state. It takes the
+ * recommendation the page already fetched rather than running the engine
+ * a second time.
+ */
+export function StrategyLab({ rec, selection }: { rec: StrategyRecommendation; selection: RaceSelection }) {
+  const [customPlan, setCustomPlan] = useState<PitPlan>([[Math.min(selection.lap + 10, selection.lap + rec.laps_remaining - 1), "HARD"]]);
   const [customResult, setCustomResult] = useState<SimulationOutcome | null>(null);
   const [customError, setCustomError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-
-  const recommendation = useAsync(
-    () =>
-      api.optimalStrategy({
-        race_id: selection.raceId,
-        lap_number: selection.lap,
-        driver_id: selection.driverId,
-        n_simulations: 1000,
-      }),
-    [selection.raceId, selection.lap, selection.driverId],
-    ready,
-  );
-
-  const rec = recommendation.data;
-  const accent = teamAccent(rec?.team_id);
+  const accent = "var(--rq-accent)";
 
   const runCustom = async () => {
     setRunning(true);
@@ -238,19 +227,6 @@ export function SimulationView() {
     : [];
 
   return (
-    <div style={accentVars(accent)}>
-      <SectionLabel>Strategy simulation</SectionLabel>
-      <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 16px", letterSpacing: "0.02em" }}>
-        Compare the trade
-      </h1>
-
-      <RaceSelector state={state} />
-
-      {!ready && <EmptyState>SELECT A RACE, DRIVER AND LAP TO COMPARE STRATEGIES</EmptyState>}
-      {recommendation.error && <ErrorState message={recommendation.error} />}
-      {ready && recommendation.loading && <TableSkeleton rows={5} />}
-
-      {rec && !recommendation.loading && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 18 }}>
           <Card style={{ padding: "20px 22px" }}>
             <SectionLabel style={{ marginBottom: 6 }}>Risk vs reward</SectionLabel>
@@ -324,8 +300,8 @@ export function SimulationView() {
               style={{
                 marginTop: 16,
                 width: "100%",
-                background: running ? C.raised : C.accent,
-                color: running ? C.faint : "var(--rq-on-accent, #fff)",
+                background: running ? C.raised : C.carbon,
+                color: running ? C.faint : "#fff",
                 border: "none",
                 borderRadius: 4,
                 padding: "12px",
@@ -377,7 +353,5 @@ export function SimulationView() {
             )}
           </Card>
         </div>
-      )}
-    </div>
   );
 }

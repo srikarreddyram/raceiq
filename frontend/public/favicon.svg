@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="5" fill="#0a0a0f"/>
-  <!-- Apex line: the racing line through a corner, in the brand gold. -->
-  <path d="M5 26 C 5 12, 13 6, 27 6" stroke="#C9A84C" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-  <circle cx="27" cy="6" r="3" fill="#E10600"/>
+  <!-- RaceIQ mark: three bars rising left to right, all leaning 16 degrees (src/design/Logo.tsx). -->
+  <path d="M4.51 18 L10.51 18 L6.50 32 L0.50 32 Z" fill="#15151E"/>
+  <path d="M14.81 10 L20.81 10 L14.50 32 L8.50 32 Z" fill="#15151E"/>
+  <path d="M25.68 0 L31.68 0 L22.50 32 L16.50 32 Z" fill="#E10600"/>
 </svg>

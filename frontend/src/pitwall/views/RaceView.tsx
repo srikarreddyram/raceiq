@@ -23,6 +23,7 @@ import { C, DISPLAY, F, NUM, compoundColor } from "../../design/tokens";
 import { SPRING } from "../../design/Animations";
 import { FinishDistribution } from "../components/FinishDistribution";
 import { RaceSelector, useRaceSelection } from "../components/RaceSelector";
+import { StrategyLab } from "./SimulationView";
 
 function pct(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
@@ -225,9 +226,9 @@ export function RaceView() {
     <div style={accentVars(accent)}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16, gap: 16, flexWrap: "wrap" }}>
         <div>
-          <SectionLabel>Race view</SectionLabel>
+          <SectionLabel>Race strategy</SectionLabel>
           <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 0", letterSpacing: "0.02em" }}>
-            Strategy call
+            {state.race?.name ?? "Strategy call"} — lap {selection.lap}
           </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -366,6 +367,8 @@ export function RaceView() {
               </ul>
             </Card>
           </div>
+
+          <StrategyLab rec={rec} selection={selection} />
 
           <Card style={{ padding: "20px 22px" }}>
             <SectionLabel style={{ marginBottom: 18 }}>

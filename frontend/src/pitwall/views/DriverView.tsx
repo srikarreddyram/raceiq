@@ -246,15 +246,18 @@ function WetDry({ profile }: { profile: DriverProfile }) {
 
 export function DriverView() {
   const [season, setSeason] = useState(2026);
-  const [driverId, setDriverId] = useState("leclerc");
+  const [driverId, setDriverId] = useState("");
   const drivers = useAsync(() => api.drivers(season), [season]);
+  const standings = useAsync(() => api.standings(season), [season]);
   const ready = Boolean(drivers.data?.some((d) => d.driver_id === driverId));
 
+  // Default to the championship leader, not a hard-coded driver.
   useEffect(() => {
     if (drivers.data?.length && !drivers.data.some((d) => d.driver_id === driverId)) {
-      setDriverId(drivers.data[0].driver_id);
+      const leader = standings.data?.drivers.find((s) => drivers.data!.some((d) => d.driver_id === s.id));
+      setDriverId(leader?.id ?? drivers.data[0].driver_id);
     }
-  }, [drivers.data, driverId]);
+  }, [drivers.data, standings.data, driverId]);
 
   const profile = useAsync(() => api.driverProfile(driverId, season), [driverId, season, ready], ready);
   const [showAllCircuits, setShowAllCircuits] = useState(false);

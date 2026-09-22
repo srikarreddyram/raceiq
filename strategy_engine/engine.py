@@ -15,7 +15,7 @@ import numpy as np
 from strategy_engine.field import build_field_snapshot_from_gold, driver_recent_pace
 from strategy_engine.scoring.score import score_strategy
 from strategy_engine.search.candidates import generate_candidates
-from strategy_engine.simulation.monte_carlo import _deterministic_tyre_plan, build_shared_context, simulate_strategy
+from strategy_engine.simulation.monte_carlo import _deterministic_tyre_plan, build_shared_context, simulate_strategies
 from strategy_engine.state import RaceState
 from strategy_engine.tyre_pace import age_neutral, plan_cost, tyre_adjusted_rivals, wear_rates
 
@@ -83,10 +83,8 @@ def recommend_strategy(
 
     def score_all(strategies: list, n: int) -> list:
         shared = build_shared_context(state, rivals, n, rng)
-        return [
-            score_strategy(simulate_strategy(state, s, rivals, shared, pace_deviation_override=overrides[s]))
-            for s in strategies
-        ]
+        results = simulate_strategies(state, strategies, rivals, shared, [overrides[s] for s in strategies])
+        return [score_strategy(r) for r in results]
 
     finalists = candidates
     if len(candidates) > FINALISTS and n_simulations > SCREEN_SIMULATIONS:

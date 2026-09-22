@@ -35,7 +35,7 @@ import { useAsync } from "../../api/useAsync";
 import { Card, EmptyState, ErrorState, SectionLabel, Stat, TableSkeleton } from "../../design/primitives";
 import { C, DISPLAY, F, NUM } from "../../design/tokens";
 import { ACCENT, AXIS_LINE, AXIS_TICK, GRID_STROKE, TOOLTIP_STYLE } from "../components/chartStyle";
-import { TeamPicker, useTeamSelection } from "../components/TeamPicker";
+import type { useTeamSelection } from "../components/TeamPicker";
 
 function fmt(value: number | null | undefined, unit: string): string {
   if (value == null) return "—";
@@ -285,8 +285,7 @@ function TyreWindow({ profile }: { profile: CarProfile }) {
   );
 }
 
-export function CarProfileView() {
-  const team = useTeamSelection();
+export function CarProfileSection({ team }: { team: ReturnType<typeof useTeamSelection> }) {
   const profile = useAsync(
     () => api.carProfile(team.teamId, team.season),
     [team.teamId, team.season, team.ready],
@@ -298,26 +297,14 @@ export function CarProfileView() {
   const selected = data?.characteristics.find((c) => c.key === selectedKey) ?? data?.characteristics[0];
   const distinctCount = data?.characteristics.filter(isDistinct).length ?? 0;
 
-  // Team-scoped, so the whole view wears the team's colour — the F1 app's team pages do the same.
   return (
-    <div style={accentVars(teamAccent(team.teamId))}>
-      <SectionLabel>Car profile</SectionLabel>
-      <h1 style={{ ...DISPLAY, fontSize: 34, margin: "8px 0 20px", letterSpacing: "0.02em" }}>
-        What the data says about the car
-      </h1>
-
-      <TeamPicker state={team} />
-
+    <div>
       {(team.teams.error || profile.error) && <ErrorState message={(team.teams.error || profile.error)!} />}
       {profile.loading && <TableSkeleton rows={8} columns={3} />}
 
       {data && !profile.loading && (
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <Card accent={C.accent} style={{ padding: "22px 26px" }}>
-            <SectionLabel>{data.season} season</SectionLabel>
-            <h2 style={{ ...DISPLAY, fontSize: 40, margin: "10px 0 18px", letterSpacing: "0.02em" }}>
-              {team.teamName}
-            </h2>
+          <Card accent={C.accent} style={{ padding: "18px 22px" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 24 }}>
               <Stat label="Races observed" value={data.races_observed} size={26} />
               <Stat label="Through" value={data.last_race_id.replace("_", " R")} size={22} />

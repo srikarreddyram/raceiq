@@ -325,3 +325,83 @@ export type ProfileConfidencePoint = {
   distinct_share: number;
   pairs: number;
 };
+
+export type WaitWindow = {
+  open_lap: number;
+  pull_the_plug_lap: number;
+  latest_safe_lap: number;
+  caution_saving_seconds: number;
+  per_lap_caution_probability: number;
+  has_window: boolean;
+  reason: string;
+};
+
+export type PlannedStop = {
+  stop_number: number;
+  compound: string;
+  window_open: number;
+  window_close: number;
+  nominal_lap: number;
+  wait: WaitWindow | null;
+};
+
+/** GET /races/{id}/plan — the race weekend planner (race_plan/). */
+export type RacePlan = {
+  race_id: string;
+  race_name: string;
+  circuit_id: string;
+  circuit_name: string | null;
+  date: string;
+  driver_id: string;
+  team_id: string;
+  grid_position: number;
+  actual_grid_position: number | null;
+  total_laps: number;
+  n_simulations: number;
+  conditions: {
+    track_temp: number;
+    air_temp: number;
+    rain_expected: boolean;
+    circuit_baseline_track_temp: number | null;
+    historical_sc_rate: number | null;
+    historical_overtaking_rate: number | null;
+    pit_loss_seconds: number;
+    cold_start_circuit: boolean;
+  };
+  starting_compound: string;
+  compound_sequence: string[];
+  compound_choice_is_decisive: boolean;
+  stops: PlannedStop[];
+  expected_finish: number;
+  win_probability: number;
+  points_probability: number;
+  expected_points: number;
+  starting_options: { starting_compound: string; plan: string; strategy_score: number; expected_finish: number; expected_points: number }[];
+  tyres: {
+    allocation: Record<string, number>;
+    race_reserved: Record<string, number>;
+    quali_reserved: Record<string, number>;
+    practice_budget: Record<string, number>;
+    used_in_practice: { compound: string; laps_run: number; first_session: string; sessions: string[] }[];
+    warnings: string[];
+  };
+};
+
+export type StandingEntry = { id: string; name: string; team_id: string | null; points: number; wins: number };
+export type Standings = { season: number; through_race_id: string; drivers: StandingEntry[]; constructors: StandingEntry[] };
+
+export type TeamSpeed = {
+  team_id: string;
+  name: string;
+  races: number;
+  top_speed_delta_kph: number;
+  top_speed_ci95: [number, number] | null;
+  median_trap_kph: number;
+  pace_delta_s: number;
+  pace_ci95: [number, number] | null;
+  reading: string;
+  by_race: { race_id: string; circuit_name: string; trap_kph: number; trap_delta_kph: number; pace_delta_s: number }[];
+};
+
+/** GET /teams/speed — straight-line speed against overall pace, 2023 onwards. */
+export type SpeedProfile = { season: number; races: number; teams: TeamSpeed[] };

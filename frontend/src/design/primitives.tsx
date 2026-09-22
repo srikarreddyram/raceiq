@@ -39,24 +39,29 @@ export function Card({
 }
 
 /**
- * The eyebrow: small, bold, uppercase, in the accent colour — the one
- * recurring "this labels a block below it" signature. Reuse this recipe
- * rather than inventing a label style per screen.
+ * The eyebrow: small bold uppercase carbon type behind a short accent tab.
+ * The tab carries the colour (F1 red, or a team's on team pages) so the
+ * accent marks every block without painting every label red — which is
+ * what made the first light theme read as a Ferrari site.
  */
 export function SectionLabel({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return (
     <div
       style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
         fontFamily: F.mono,
         fontWeight: 700,
         fontSize: 11.5,
-        color: C.accent,
-        letterSpacing: "0.12em",
+        color: C.text,
+        letterSpacing: "0.1em",
         textTransform: "uppercase",
         ...style,
       }}
     >
-      {children}
+      <span aria-hidden style={{ width: 4, height: 13, background: C.accent, borderRadius: 1, flex: "none" }} />
+      <span>{children}</span>
     </div>
   );
 }
@@ -96,8 +101,8 @@ export function Segmented({
             onClick={() => onChange(o.value)}
             aria-pressed={active}
             style={{
-              background: active ? C.accent : "transparent",
-              color: active ? "var(--rq-on-accent, #fff)" : C.dim,
+              background: active ? C.carbon : "transparent",
+              color: active ? "#fff" : C.dim,
               border: "none",
               borderRadius: 999,
               padding: "6px 16px",

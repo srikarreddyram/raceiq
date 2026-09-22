@@ -25,6 +25,9 @@ import type {
   ModelHealth,
   PitPlan,
   ProfileConfidencePoint,
+  RacePlan,
+  SpeedProfile,
+  Standings,
   Race,
   SimulationOutcome,
   StrategyRecommendation,
@@ -77,12 +80,17 @@ export const api = {
   teams: (season?: number) => request<Team[]>(`/teams${season ? `?season=${season}` : ""}`),
   carProfile: (teamId: string, season: number) =>
     request<CarProfile>(`/teams/${teamId}/car-profile?season=${season}`),
+  speed: (season: number) => request<SpeedProfile>(`/teams/speed?season=${season}`),
   tyres: (teamId: string, season: number) => request<TyreReport>(`/teams/${teamId}/tyres?season=${season}`),
 
   drivers: (season?: number) => request<Driver[]>(`/drivers${season ? `?season=${season}` : ""}`),
   driverProfile: (driverId: string, season: number) =>
     request<DriverProfile>(`/drivers/${driverId}/profile?season=${season}`),
   races: (season?: number) => request<Race[]>(`/races${season ? `?season=${season}` : ""}`),
+
+  standings: (season?: number) => request<Standings>(`/standings${season ? `?season=${season}` : ""}`),
+  racePlan: (raceId: string, driverId: string, grid?: number | null) =>
+    request<RacePlan>(`/races/${raceId}/plan?driver_id=${driverId}${grid ? `&grid=${grid}` : ""}`),
 
   modelHealth: () => request<ModelHealth[]>("/monitoring/models"),
   lapTimeOverlay: (raceId: string, driverId: string) =>

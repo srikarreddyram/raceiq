@@ -141,3 +141,17 @@ def test_validation_counts_each_stop_once():
         }
     )
     assert _actual_plan(laps, "x", snapshot_lap=10) == ((12, "HARD"),)
+
+
+def test_batched_candidates_match_one_at_a_time(leader_state, leader_rivals):
+    # Batching is only a speed-up: every candidate must come out exactly as
+    # if it had been simulated on its own against the same shared draws.
+    from strategy_engine.search.candidates import generate_candidates
+
+    candidates = generate_candidates(leader_state, feasibility="empirical")[:5]
+    shared = mc.build_shared_context(leader_state, leader_rivals, 64, np.random.default_rng(1))
+    paces = [-0.3, -0.2, -0.1, 0.0, 0.1][: len(candidates)]
+    batched = mc.simulate_strategies(leader_state, candidates, leader_rivals, shared, paces)
+    for strategy, pace, result in zip(candidates, paces, batched):
+        single = mc.simulate_strategy(leader_state, strategy, leader_rivals, shared, pace_deviation_override=pace)
+        assert np.array_equal(single.final_positions, result.final_positions)
