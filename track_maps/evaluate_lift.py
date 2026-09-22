@@ -82,7 +82,10 @@ MODELS = [
 def _load(module_name: str) -> tuple[pd.DataFrame, list[str], str, pd.Series | None]:
     module = importlib.import_module(f"models.{module_name}.train")
     df = module.prepare_dataset()
-    df = add_circuit_geometry(df)
+    # Lap Time's prepare_dataset already attaches geometry, from the raw
+    # circuit_id; re-adding it here would look it up via the categorical.
+    if "lap_length_m" not in df.columns:
+        df = add_circuit_geometry(df)
     # The baseline is the model's feature list WITHOUT geometry and WITH
     # circuit_id — the pre-track_maps model, whatever production now uses.
     base = [c for c in module.FEATURE_COLUMNS if c not in GEOMETRY_COLUMNS]

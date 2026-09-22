@@ -240,3 +240,60 @@ def season_profile(con: duckdb.DuckDBPyConnection, team_id: str, season: int) ->
             "ingest. They're absent rather than invented."
         ),
     }
+
+
+def confidence_over_season(con: duckdb.DuckDBPyConnection, season: int) -> list[dict]:
+    """How sure the CarProfiles are, race by race, across the whole grid —
+    PRD 13.2's "car profile inference confidence over the season".
+
+    For every team and every mean-type characteristic, the 95% interval's
+    half-width after k races, divided by how far apart the grid's teams
+    ended up on that characteristic — so 1.0 means "the uncertainty is as
+    wide as the whole grid's spread" and the number is comparable across
+    characteristics with different units. Summarised per k as a median
+    and interquartile band, plus the share of (team, characteristic)
+    pairs whose interval already excludes the grid mean.
+    """
+    obs = con.execute(
+        "SELECT * FROM gold.car_race_observations WHERE season = ? ORDER BY date", [season]
+    ).df()
+    if obs.empty:
+        return []
+    keys = [c["key"] for c in CHARACTERISTICS if c["kind"] == "mean"]
+    spread = {}
+    for key in keys:
+        team_means = obs.groupby("team_id")[key].mean().dropna()
+        spread[key] = float(team_means.max() - team_means.min()) if len(team_means) > 1 else float("nan")
+
+    obs = obs.assign(k=obs.groupby("team_id").cumcount() + 1)
+    rows = []
+    for k in range(1, int(obs["k"].max()) + 1):
+        relative, distinct, total = [], 0, 0
+        for key in keys:
+            estimates = {}
+            for team, grp in obs[obs["k"] <= k].groupby("team_id"):
+                if grp["k"].max() < k:
+                    continue  # a team with fewer than k races isn't at step k yet
+                estimates[team] = _mean_estimate(grp[key])
+            values = [e["value"] for e in estimates.values() if e["value"] is not None]
+            if not values or not math.isfinite(spread[key]) or spread[key] == 0:
+                continue
+            grid_mean = float(np.mean(values))
+            for e in estimates.values():
+                if e["ci95"] is None:
+                    continue
+                total += 1
+                relative.append((e["ci95"][1] - e["ci95"][0]) / 2 / spread[key])
+                distinct += e["ci95"][0] > grid_mean or e["ci95"][1] < grid_mean
+        if relative:
+            rows.append(
+                {
+                    "races": k,
+                    "median_relative_halfwidth": round(float(np.median(relative)), 4),
+                    "p25_relative_halfwidth": round(float(np.quantile(relative, 0.25)), 4),
+                    "p75_relative_halfwidth": round(float(np.quantile(relative, 0.75)), 4),
+                    "distinct_share": round(distinct / total, 4),
+                    "pairs": total,
+                }
+            )
+    return rows

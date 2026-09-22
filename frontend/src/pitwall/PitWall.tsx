@@ -4,12 +4,9 @@
  * motion, no scroll choreography, everything above the fold and legible
  * at a glance.
  *
- * PRD 13.2 names seven views. Six are built here (Race, Strategy
- * Simulation, Circuit, Car Profile, Tyre, Driver); the last is listed in
- * the nav as unavailable, with the specific missing backend named, rather
- * than silently omitted or stubbed with fake panels:
- *   - Model Performance needs monitoring/ exposed over the API (it exists
- *     as a CLI report today, not an endpoint)
+ * PRD 13.2 names seven views, and all seven are built here: Race,
+ * Strategy Simulation, Circuit, Car Profile, Tyre, Driver and Model
+ * Performance.
  */
 
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
@@ -18,6 +15,7 @@ import { C, F } from "../design/tokens";
 import { CarProfileView } from "./views/CarProfileView";
 import { CircuitView } from "./views/CircuitView";
 import { DriverView } from "./views/DriverView";
+import { ModelPerformanceView } from "./views/ModelPerformanceView";
 import { RaceView } from "./views/RaceView";
 import { SimulationView } from "./views/SimulationView";
 import { TyreView } from "./views/TyreView";
@@ -31,7 +29,7 @@ const NAV: NavItem[] = [
   { to: "/pitwall/car-profile", label: "Car Profile" },
   { to: "/pitwall/tyre", label: "Tyre" },
   { to: "/pitwall/driver", label: "Driver" },
-  { to: "/pitwall/models", label: "Model Perf", disabled: "monitoring/ is CLI-only today" },
+  { to: "/pitwall/models", label: "Model Perf" },
 ];
 
 function TopBar() {
@@ -144,6 +142,7 @@ export function PitWall() {
           <Route path="car-profile" element={<CarProfileView />} />
           <Route path="tyre" element={<TyreView />} />
           <Route path="driver" element={<DriverView />} />
+          <Route path="models" element={<ModelPerformanceView />} />
           <Route path="*" element={<Navigate to="/pitwall/race" replace />} />
         </Routes>
       </main>

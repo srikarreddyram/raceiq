@@ -106,6 +106,15 @@ BOOLEAN_FEATURES = [
 # same experiment found no lift for Tyre Degradation or Pit Stop, and a
 # Safety Car "lift" on seen circuits that collapsed on unseen ones —
 # memorisation, not learning — so none of those got these columns.
+#
+# The first REAL unseen circuit didn't bear the unseen-circuit result out.
+# On the 2026 season (never trained on) this model and the circuit_id one
+# it replaced tie — stable-lap MAE 0.804 vs 0.799, this one better at 8 of
+# 14 races — but at Madring, the only venue new in 2026, it is worse: 1.74
+# vs 0.95, running +1.5 s slow on average. One circuit is one sample, and
+# Madring's geometry is from detected corners (FastF1 has no official list
+# for it yet), but it's the case this change was meant for, so it's
+# recorded here rather than left for monitoring to rediscover.
 LAP_TIME_CATEGORICALS = [c for c in CATEGORICAL_COLUMNS if c != "circuit_id"]
 FEATURE_COLUMNS = NUMERIC_FEATURES + CIRCUIT_GEOMETRY_COLUMNS + BOOLEAN_FEATURES + LAP_TIME_CATEGORICALS
 
@@ -130,8 +139,14 @@ def prepare_dataset() -> pd.DataFrame:
     df = df[df["next_red_flag_active"] != 1]
     for col in BOOLEAN_FEATURES:
         df[col] = df[col].astype(int)
-    df = apply_categorical_dtypes(df, CATEGORICAL_COLUMNS)
+    # Geometry BEFORE the categorical conversion: the category vocabulary
+    # is built from eligible seasons only (see models/common/features.py),
+    # so a circuit first raced in 2026 — Madring — becomes NaN there, and a
+    # lookup after it silently gave every Madring lap no geometry at all.
+    # Monitoring caught it: stable-lap MAE 3.7 s at Madring against ~0.7
+    # everywhere else, with a -2.9 s bias.
     df = add_circuit_geometry(df)
+    df = apply_categorical_dtypes(df, CATEGORICAL_COLUMNS)
     return df
 
 

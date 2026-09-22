@@ -21,7 +21,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from serving.api.routers import circuits, drivers, predictions, races, teams
+from serving.api.routers import circuits, drivers, monitoring, predictions, races, teams
 
 app = FastAPI(
     title="RaceIQ API",
@@ -46,6 +46,7 @@ app.include_router(circuits.router)
 app.include_router(drivers.router)
 app.include_router(races.router)
 app.include_router(teams.router)
+app.include_router(monitoring.router)
 app.include_router(predictions.router)
 
 

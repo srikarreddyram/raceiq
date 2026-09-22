@@ -88,3 +88,14 @@ def test_lap_time_model_uses_geometry_instead_of_circuit_id():
     # Whatever the oracle loads must have been trained on exactly this list,
     # or strategy_engine/oracles.py builds rows the model can't read.
     assert list(load_latest_model("lap_time_prediction").feature_name_) == FEATURE_COLUMNS
+
+
+def test_every_raced_circuit_reaches_the_lap_time_model_with_geometry():
+    # A circuit first raced in 2026 isn't in the categorical vocabulary; a
+    # geometry lookup after that conversion silently gave Madring no
+    # geometry and a 2.9 s/lap bias. Every row, every season, must have it.
+    from models.lap_time.train import prepare_dataset
+
+    df = prepare_dataset()
+    missing = df[df["lap_length_m"].isna()]
+    assert missing.empty, f"no geometry for: {sorted(missing['race_id'].unique())[:10]}"

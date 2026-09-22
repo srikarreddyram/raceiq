@@ -365,3 +365,64 @@ class DriverProfile(BaseModel):
     circuits: list[DriverCircuitRecord]
     wet_dry: list[WetDrySplit]
     min_wet_laps: int
+
+
+class MetricComparison(BaseModel):
+    current: float
+    baseline: float | None  # the promoted run's test-season figure
+    status: str  # "ok", "WARN" or "no baseline"
+
+
+class RaceMetric(BaseModel):
+    race_id: str
+    n_rows: int
+    value: float | None  # null where undefined, e.g. an AUC in a race with no safety car
+
+
+class FeatureDrift(BaseModel):
+    feature: str
+    psi: float
+    null_p95: float  # PSI of random same-size sets of training races — the noise floor
+    drifted: bool
+
+
+class ModelHealth(BaseModel):
+    """One model's monitoring row — written by monitoring/run.py."""
+
+    experiment: str
+    label: str
+    kind: str
+    evaluated_at: str
+    status: str  # "ok", "warn" or "skipped"
+    n_rows: int | None
+    n_races: int | None
+    per_race_metric: str
+    per_race_lower_is_better: bool
+    per_race_baseline: float | None
+    metrics: dict[str, MetricComparison]
+    per_race: list[RaceMetric]
+    feature_drift: list[FeatureDrift]
+    notes: list[str]
+
+
+class LapTimeOverlayPoint(BaseModel):
+    lap_number: int
+    predicted: float
+    actual: float
+    stable: bool
+
+
+class LapTimeOverlay(BaseModel):
+    race_id: str
+    driver_id: str
+    laps: list[LapTimeOverlayPoint]
+    mae_stable: float | None
+
+
+class ProfileConfidencePoint(BaseModel):
+    races: int
+    median_relative_halfwidth: float
+    p25_relative_halfwidth: float
+    p75_relative_halfwidth: float
+    distinct_share: float
+    pairs: int

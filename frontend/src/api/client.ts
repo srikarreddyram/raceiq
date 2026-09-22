@@ -20,8 +20,11 @@ import type {
   CircuitProfile,
   Driver,
   DriverProfile,
+  LapTimeOverlay,
   LapTimePrediction,
+  ModelHealth,
   PitPlan,
+  ProfileConfidencePoint,
   Race,
   SimulationOutcome,
   StrategyRecommendation,
@@ -80,6 +83,12 @@ export const api = {
   driverProfile: (driverId: string, season: number) =>
     request<DriverProfile>(`/drivers/${driverId}/profile?season=${season}`),
   races: (season?: number) => request<Race[]>(`/races${season ? `?season=${season}` : ""}`),
+
+  modelHealth: () => request<ModelHealth[]>("/monitoring/models"),
+  lapTimeOverlay: (raceId: string, driverId: string) =>
+    request<LapTimeOverlay>(`/monitoring/lap-time?race_id=${raceId}&driver_id=${driverId}`),
+  profileConfidence: (season: number) =>
+    request<ProfileConfidencePoint[]>(`/monitoring/car-profile-confidence?season=${season}`),
 
   predictLapTime: (body: { race_id: string; lap_number: number; driver_id: string }) =>
     post<LapTimePrediction>("/predict/laptime", body),

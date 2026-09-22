@@ -3,8 +3,15 @@ track_maps/ (`uv run python -m track_maps.run`).
 
 One lookup shared by training (prepare_dataset) and inference
 (strategy_engine/oracles.py), so the two cannot disagree about which
-columns exist or how a circuit with no map is represented (NaN — missing,
-which LightGBM handles natively — never 0).
+columns exist or how a circuit with no map is represented (NaN, never 0).
+
+NaN is NOT a safe fallback, though, and this is worth knowing: every
+training circuit has a map, so the model never saw missing geometry and
+routes it down arbitrary default branches. When a join bug left Madring
+without geometry the model ran 2.9 s/lap fast there. Every raced circuit
+needs a map — tests/test_track_maps.py checks that — and `circuit_id` must
+be the raw string when this runs, not the categorical (whose vocabulary
+excludes circuits first raced in 2026).
 
 Only the columns that survived track_maps/evaluate_lift.py are here.
 Excluded from every model: sector average speeds (lap length over sector

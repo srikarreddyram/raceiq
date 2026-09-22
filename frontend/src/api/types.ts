@@ -290,3 +290,38 @@ export type DriverProfile = {
   }[];
   min_wet_laps: number;
 };
+
+export type MetricComparison = { current: number; baseline: number | null; status: "ok" | "WARN" | "no baseline" };
+
+export type ModelHealth = {
+  experiment: string;
+  label: string;
+  kind: string;
+  evaluated_at: string;
+  status: "ok" | "warn" | "skipped";
+  n_rows: number | null;
+  n_races: number | null;
+  per_race_metric: string;
+  per_race_lower_is_better: boolean;
+  per_race_baseline: number | null;
+  metrics: Record<string, MetricComparison>;
+  per_race: { race_id: string; n_rows: number; value: number | null }[];
+  feature_drift: { feature: string; psi: number; null_p95: number; drifted: boolean }[];
+  notes: string[];
+};
+
+export type LapTimeOverlay = {
+  race_id: string;
+  driver_id: string;
+  laps: { lap_number: number; predicted: number; actual: number; stable: boolean }[];
+  mae_stable: number | null;
+};
+
+export type ProfileConfidencePoint = {
+  races: number;
+  median_relative_halfwidth: number;
+  p25_relative_halfwidth: number;
+  p75_relative_halfwidth: number;
+  distinct_share: number;
+  pairs: number;
+};
