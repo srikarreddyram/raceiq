@@ -44,7 +44,7 @@ import numpy as np
 from car_profiles.degradation_curves import DRY_COMPOUNDS, season_model
 from strategy_engine.field import RivalTrend
 from strategy_engine.state import RaceState
-from strategy_engine.tyre_baselines import RIVAL_FINAL_COMPOUND, rival_stop_laps
+from strategy_engine.tyre_baselines import RIVAL_FINAL_COMPOUND, StopPatterns, rival_stop_laps
 
 MAX_WEAR_AGE = 35  # matches monte_carlo.MAX_TYRE_AGE_FOR_SIMULATION
 TREND_WINDOW_MIDPOINT = 2  # recent pace is a 5-lap mean; its tyres were ~2 laps younger than now
@@ -105,3 +105,22 @@ def tyre_adjusted_rivals(rivals: list[RivalTrend], state: RaceState, season: int
         pace = age_neutral(recent, rival.compound, rival.tyre_age, wear) + rival_plan_cost(rival, state.circuit_id, n_laps, wear)
         adjusted.append(replace(rival, recent_pace_delta=pace))
     return adjusted
+
+
+def field_plan_cost(patterns: StopPatterns, total_laps: int, wear: dict[str, float]) -> float:
+    """Mean per-lap tyre cost of the real stop patterns the pre-race field
+    runs — the reference our own candidates are measured against. A car's
+    season form was earned on plans like these, so a candidate costing
+    exactly this much is worth exactly its season form."""
+    costs = []
+    for fractions, compounds in zip(patterns.fractions, patterns.compounds):
+        stops = {int(round(f * total_laps)): c for f, c in zip(fractions, compounds[1:])}
+        compound, age, lap_costs = compounds[0], 0.0, []
+        for lap in range(1, total_laps + 1):
+            if lap in stops:
+                compound, age = stops[lap], 0.0
+            else:
+                age += 1
+            lap_costs.append(tyre_cost(compound, age, wear))
+        costs.append(np.mean(lap_costs))
+    return float(np.mean(costs))

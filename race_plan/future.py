@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import math
 from dataclasses import dataclass, replace
 from functools import lru_cache
 
@@ -38,7 +37,8 @@ import pandas as pd
 
 from models.common.data import load_race_features
 from models.common.db import get_connection
-from race_plan.field import _season_form, starting_gap_for_position
+from race_plan.field import _form_or_zero, _season_form, starting_gap_for_position
+from race_plan.weekend_pace import qualifying_gaps, weekend_pace
 from strategy_engine.field import RivalTrend
 from strategy_engine.state import RaceState
 
@@ -254,6 +254,16 @@ def entry_list(con: duckdb.DuckDBPyConnection, season: int, before_date) -> pd.D
     ).df()
 
 
+def qualifying_order(con: duckdb.DuckDBPyConnection, season: int, rnd: int) -> dict[str, int]:
+    """The qualifying classification, once qualifying has run — Saturday
+    night's grid, before any penalties (which aren't in this data)."""
+    rows = con.execute(
+        "SELECT driver_id, position FROM bronze.ergast_qualifying WHERE season = ? AND round = ? ORDER BY position",
+        [season, rnd],
+    ).fetchall()
+    return {driver: int(pos) for driver, pos in rows if pos is not None}
+
+
 def _grid_slots(order: dict[str, int], drivers: list[str], ours: str, our_slot: int) -> dict[str, int]:
     """Place everyone in expected-grid order around our driver's slot."""
     others = sorted((d for d in drivers if d != ours), key=lambda d: order.get(d, 99))
@@ -278,7 +288,9 @@ def future_setup(race_id: str, driver_id: str, grid: int | None, track_temp: flo
         priors = circuit_priors(con, circuit_id, season)
         conditions = race_conditions(entry, priors, track_temp, rain)
         entries = entry_list(con, season, date)
-        order = expected_grid(con, season, date)
+        # Qualifying run: the grid is known. Otherwise the season-average one.
+        qualified = qualifying_order(con, season, int(entry["round"]))
+        order = qualified or expected_grid(con, season, date)
         latest = _latest_race_before(con, season, date)
     finally:
         con.close()
@@ -320,19 +332,22 @@ def future_setup(race_id: str, driver_id: str, grid: int | None, track_temp: flo
         compounds_used_this_race=set(),
     )
 
+    # Season form, sharpened by qualifying once it has run
+    # (race_plan/weekend_pace.py).
     form = _season_form(season, str(date))
+    quali = qualifying_gaps(race_id)
     rivals = [
         RivalTrend(
             driver_id=r.driver_id,
             team_id=r.constructor_id,
             gap_to_leader=starting_gap_for_position(slots[r.driver_id]),
-            recent_pace_delta=0.0 if pd.isna(form.get(r.driver_id, 0.0)) else float(form.get(r.driver_id, 0.0)),
+            recent_pace_delta=weekend_pace(_form_or_zero(form, r.driver_id), quali.get(r.driver_id)),
             compound=DEFAULT_PIT_START_COMPOUND,
             tyre_age=0.0,
         )
         for r in entries.itertuples()
         if r.driver_id != driver_id
     ]
-    anchor = form.get(driver_id, 0.0)
-    anchor = 0.0 if anchor is None or (isinstance(anchor, float) and math.isnan(anchor)) else float(anchor)
+    anchor = weekend_pace(_form_or_zero(form, driver_id), quali.get(driver_id))
+    entry = {**entry, "qualifying_run": bool(qualified)}
     return state, rivals, conditions, priors, anchor, entry

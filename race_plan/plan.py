@@ -51,14 +51,15 @@ from race_plan.field import starting_gap_for_position
 from race_plan.vsc_threshold import WaitWindow, compute_wait_window
 from strategy_engine.scoring.score import StrategyScore, score_strategy
 from strategy_engine.search.candidates import generate_candidates
-from strategy_engine.tyre_pace import plan_cost, wear_rates
+from strategy_engine.tyre_pace import field_plan_cost, plan_cost, wear_rates
 from strategy_engine.simulation.monte_carlo import (
     _deterministic_tyre_plan,
     build_shared_context,
     simulate_strategies,
+    simulate_typical_strategy,
 )
 from strategy_engine.state import DRY_COMPOUNDS, RaceState
-from strategy_engine.tyre_baselines import typical_max_stint_length
+from strategy_engine.tyre_baselines import StopPatterns, typical_max_stint_length
 
 # How far below the best strategy's score a candidate can land and still
 # count as "the same call". Sets the width of every reported pit window,
@@ -72,6 +73,24 @@ PLANNABLE_STARTING_COMPOUNDS = DRY_COMPOUNDS
 
 SCREEN_SIMULATIONS = 150
 PLAN_FINALISTS = 24
+
+# What the plan's strategy is really worth, measured — the simulation
+# credits the recommended plan with more than real races bear out, because
+# its rivals never react: our car's stops are fixed while the field's are
+# drawn at random, so it collects undercuts a real pit wall would cover.
+# From race_plan/grid_sensitivity.py --strategy-edge (every classified
+# 2025 starter). Printed with every plan, and shown on the Race Weekend page.
+# Over all 419 classified 2025 starts: the typical-strategy expected finish
+# is off by 2.37 places on average (0.32 optimistic); the recommended
+# plan's own number by 2.90 (1.99 optimistic). The simulation credits the
+# plan with 1.67 places over a typical strategy; drivers who really ran its
+# stop count beat those who didn't by 0.15 +/- 0.32 places.
+STRATEGY_EDGE_EVIDENCE = (
+    "The simulation rates this plan better than a typical strategy here, but its rivals never react to our stops, "
+    "so it over-credits strategy: across 2025, drivers who ran the recommended number of stops finished only "
+    "0.15 ± 0.32 places better than those who didn't, against 1.7 places credited. Run the plan; "
+    "expect the finish above."
+)
 
 
 @dataclass
@@ -119,6 +138,14 @@ class RacePlan:
     prior_races_at_circuit: int | None = None
     historical_overtaking_rate: float | None = None
     circuit_baseline_track_temp: float | None = None
+    # The same car on a typical strategy for this circuit — the validated
+    # number (race_plan/grid_sensitivity.py). expected_finish above is the
+    # recommended plan's, which carries the simulation's strategy credit.
+    typical_expected_finish: float | None = None
+    typical_win_probability: float | None = None
+    typical_points_probability: float | None = None
+    typical_expected_points: float | None = None
+    rival_stops_source: str = "rule"
 
     @property
     def compound_choice_is_decisive(self) -> bool:
@@ -178,7 +205,15 @@ def _starting_state(race_id: str, driver_id: str, grid_override: int | None = No
         raise ValueError(f"{driver_id!r} has no laps in {race_id!r}")
 
     total_laps = int(race_rows.lap_number.max())
-    first_lap = driver_rows.sort_values("lap_number").iloc[0]
+    first_lap = driver_rows.sort_values("lap_number").iloc[0].copy()
+    # Before lap 1 every car is on its first stint, whatever the timing
+    # data recorded — and sometimes it recorded nothing: FastF1 has no
+    # stint or tyre age for 15 of 20 cars at Miami 2025, which used to drop
+    # the whole race from every pre-race plan and check.
+    if pd.isna(first_lap["stint_number"]):
+        first_lap["stint_number"] = 1
+    if pd.isna(first_lap["tyre_age"]):
+        first_lap["tyre_age"] = 1.0
     state = RaceState.from_gold_row(first_lap, race_total_laps=total_laps)
 
     # Lap 1 has no field average: FastF1 records no lap time for the
@@ -225,6 +260,7 @@ def _plan_for_starting_compound(
     seed: int,
     race_id: str,
     pace_anchor: float,
+    stop_patterns: StopPatterns | None = None,
 ) -> tuple[StrategyScore, list[StrategyScore]] | None:
     """Score every candidate strategy that starts on `compound`.
 
@@ -258,14 +294,23 @@ def _plan_for_starting_compound(
     # The spread between candidates comes from measured tyre wear (see
     # strategy_engine/tyre_pace.py for why not the LSTM); the level comes
     # from the anchor, the same season form every rival is projected from.
+    #
+    # The anchor is what this car does on the plans the field really runs
+    # here, so a candidate is charged what its tyres cost over and above
+    # THOSE (tyre_pace.field_plan_cost) — not over the average of whatever
+    # candidates happen to be generated, which moved our car's level with
+    # the candidate list. No patterns (a new venue): the candidate average.
     wear = wear_rates(int(race_id.split("_")[0]))
     costs = np.array([plan_cost(_deterministic_tyre_plan(start_state, c), wear) for c in candidates])
-    pace = dict(zip(candidates, pace_anchor + (costs - costs.mean())))
+    reference = (
+        field_plan_cost(stop_patterns, start_state.race_total_laps, wear) if stop_patterns is not None else costs.mean()
+    )
+    pace = dict(zip(candidates, pace_anchor + (costs - reference)))
 
     def score_all(strategies: list, n: int) -> list[StrategyScore]:
         # Pre-race uncertainty, not the in-race figure: nothing about any
         # car's pace today has been observed yet.
-        shared = build_shared_context(start_state, rivals, n, rng, pre_race=True)
+        shared = build_shared_context(start_state, rivals, n, rng, pre_race=True, stop_patterns=stop_patterns)
         results = simulate_strategies(start_state, strategies, rivals, shared, [pace[c] for c in strategies])
         return [score_strategy(r) for r in results]
 
@@ -326,7 +371,7 @@ def build_race_plan(
     circuit's history, a forecast or typical conditions, the expected grid
     and the current entry list (race_plan/future.py).
     """
-    from race_plan.field import build_pre_race_field, driver_season_form
+    from race_plan.field import build_pre_race_field, driver_race_pace, stop_patterns_for_race
     from race_plan.future import future_setup, has_race_data
 
     con = get_connection()
@@ -341,8 +386,8 @@ def build_race_plan(
         # Pre-race field, not the in-race snapshot: see race_plan/field.py for
         # what reusing the lap-1 snapshot does to this plan.
         rivals = build_pre_race_field(race_id, exclude_driver_id=driver_id)
-        # Our own season form, from the identical source the rivals use.
-        pace_anchor = driver_season_form(race_id, driver_id)
+        # Our own expected pace, from the identical source the rivals use.
+        pace_anchor = driver_race_pace(race_id, driver_id)
         measured_track = float(race_rows.track_temp.mean())
         conditions = {
             "track_temp": track_temp if track_temp is not None else measured_track,
@@ -363,7 +408,7 @@ def build_race_plan(
                 condition_delta=(conditions["track_temp"] - baseline) if baseline is not None else state.condition_delta,
             )
     else:
-        state, rivals, cond, priors, pace_anchor, _entry = future_setup(race_id, driver_id, grid_override, track_temp, rain)
+        state, rivals, cond, priors, pace_anchor, entry = future_setup(race_id, driver_id, grid_override, track_temp, rain)
         conditions = {
             "track_temp": cond.track_temp,
             "air_temp": cond.air_temp,
@@ -374,15 +419,20 @@ def build_race_plan(
         }
         future_meta = {
             "is_future": True,
-            "grid_is_expected": grid_override is None,
+            "grid_is_expected": grid_override is None and not entry["qualifying_run"],
             "laps_known": priors["laps_known"],
             "prior_races_at_circuit": priors["prior_races"],
         }
 
+    # The field's stops: real patterns from this circuit (see
+    # tyre_baselines.historical_stop_patterns), the rule only at a venue
+    # without enough history.
+    stop_patterns = stop_patterns_for_race(race_id)
+
     results = {}
     for compound in PLANNABLE_STARTING_COMPOUNDS:
         outcome = _plan_for_starting_compound(
-            state, compound, rivals, n_simulations, seed, race_id, pace_anchor
+            state, compound, rivals, n_simulations, seed, race_id, pace_anchor, stop_patterns
         )
         if outcome is not None:
             results[compound] = outcome
@@ -392,6 +442,16 @@ def build_race_plan(
 
     starting_compound, (best, scored) = max(results.items(), key=lambda kv: kv[1][0].strategy_score)
     stops = _windows_from_candidates(best, scored)
+
+    # Our car as one of the field, on a real car's stops here — see
+    # STRATEGY_EDGE_EVIDENCE for why this, not the plan's own number, is
+    # the one to lean on.
+    typical_state = replace(state, compound=starting_compound, current_lap=0)
+    typical_rng = np.random.default_rng(seed)
+    typical_shared = build_shared_context(typical_state, rivals, n_simulations, typical_rng, pre_race=True, stop_patterns=stop_patterns)
+    typical = score_strategy(
+        simulate_typical_strategy(typical_state, rivals, typical_shared, pace_anchor, stop_patterns, typical_rng)
+    )
 
     # Attach the "how long do we hold out for a caution" call to each stop.
     # The hard bound is tyre life: a caution being worth waiting for never
@@ -458,6 +518,11 @@ def build_race_plan(
         points_probability=best.points_probability,
         expected_points=best.expected_points,
         considered=considered,
+        typical_expected_finish=typical.expected_finish,
+        typical_win_probability=typical.win_probability,
+        typical_points_probability=typical.points_probability,
+        typical_expected_points=typical.expected_points,
+        rival_stops_source=stop_patterns.source if stop_patterns is not None else "rule",
     )
 
 
@@ -506,10 +571,17 @@ def format_plan(plan: RacePlan) -> str:
             lines.append(f"                  {w.reason}")
         lines.append("")
 
+    if plan.typical_expected_finish is not None:
+        lines.append(
+            f"EXPECTED   P{plan.typical_expected_finish:.1f} · {plan.typical_win_probability * 100:.1f}% win · "
+            f"{plan.typical_points_probability * 100:.0f}% points · {plan.typical_expected_points:.1f} pts  "
+            f"(on a typical strategy here — the validated number)"
+        )
     lines.append(
-        f"OUTCOME    P{plan.expected_finish:.1f} expected · {plan.win_probability * 100:.1f}% win · "
+        f"THIS PLAN  P{plan.expected_finish:.1f} in the simulation · {plan.win_probability * 100:.1f}% win · "
         f"{plan.points_probability * 100:.0f}% points · {plan.expected_points:.1f} pts"
     )
+    lines.append(f"           {STRATEGY_EDGE_EVIDENCE}")
     lines.append("")
     lines.append("STARTING COMPOUNDS CONSIDERED")
     for row in plan.considered:

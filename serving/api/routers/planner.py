@@ -16,8 +16,9 @@ import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from models.common.data import is_classified
-from race_plan.plan import build_race_plan
+from race_plan.plan import STRATEGY_EDGE_EVIDENCE, build_race_plan
 from race_plan.tyre_allocation import recommend_tyre_allocation
+from race_plan.weekend_pace import qualifying_gaps
 from serving.api.db import get_db
 from serving.api.schemas import CalendarRound, RacePlanResponse, Standings, StandingEntry
 from strategy_engine.pit_loss import typical_pit_loss_seconds
@@ -133,6 +134,13 @@ def get_race_plan(
         win_probability=plan.win_probability,
         points_probability=plan.points_probability,
         expected_points=plan.expected_points,
+        typical_expected_finish=finite(plan.typical_expected_finish),
+        typical_win_probability=finite(plan.typical_win_probability),
+        typical_points_probability=finite(plan.typical_points_probability),
+        typical_expected_points=finite(plan.typical_expected_points),
+        strategy_edge_note=STRATEGY_EDGE_EVIDENCE,
+        rival_stops_source=plan.rival_stops_source,
+        qualifying_in_pace=bool(qualifying_gaps(race_id)),
         starting_options=plan.considered,
         tyres={
             "allocation": tyres.allocation,

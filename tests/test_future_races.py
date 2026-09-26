@@ -79,10 +79,15 @@ def test_an_upcoming_race_can_be_planned(upcoming):
             "SELECT driver_id FROM bronze.ergast_results WHERE season = ? GROUP BY driver_id ORDER BY SUM(points) DESC LIMIT 1",
             [int(upcoming[0].split("_")[0])],
         ).fetchone()[0]
+        season, rnd = (int(x) for x in upcoming[0].split("_"))
+        qualified = future.qualifying_order(con, season, rnd)
     finally:
         con.close()
     plan = build_race_plan(upcoming[0], leader, n_simulations=300)
-    assert plan.is_future and plan.grid_is_expected
+    # Qualifying run: Saturday night's grid. Not run: the season-average one.
+    assert plan.is_future and plan.grid_is_expected == (not qualified)
+    if qualified:
+        assert plan.grid_position == qualified[leader]
     assert plan.conditions_source == "typical"  # forecast stubbed out
     assert plan.stops and all(s.window_open <= s.nominal_lap <= s.window_close for s in plan.stops)
     what_if = build_race_plan(upcoming[0], leader, n_simulations=300, grid_override=15)

@@ -165,7 +165,7 @@ from strategy_engine.model_features import apply_reference_categoricals
 from strategy_engine.pit_loss import typical_pit_loss_seconds
 from strategy_engine.search.candidates import Strategy
 from strategy_engine.state import RaceState
-from strategy_engine.tyre_baselines import rival_stop_laps, typical_degradation_rate
+from strategy_engine.tyre_baselines import StopPatterns, rival_stop_laps, typical_degradation_rate
 
 # Lap-to-lap variation in a car's lap time around its own trend, the same
 # for every car: std of clean-air green-lap residuals from a quadratic
@@ -263,7 +263,25 @@ SC_PERIOD_LAPS = 5
 # finisher from 40% distance on their actual strategy). In-race, dry races,
 # expected-finish MAE / Spearman: 0.35 s -> 2.05 / 0.863, 0.6 s -> 2.01 /
 # 0.874, 1.0 s -> 1.97 / 0.872. Flat between 0.6 and 1.0 on both checks;
-# 0.6 has the best rank correlation.
+# 0.6 had the best rank correlation.
+#
+# Re-calibrated to 1.3 s once the pre-race field stopped pitting in
+# unison (tyre_baselines.historical_stop_patterns). That artefact had
+# been rewarding easy passing — a car that jumped the whole field at once
+# kept it only if nobody could pass back — so the old sweep pointed the
+# wrong way. Afterwards, both checks improve together up to ~1.3 s:
+#   pre-race  (MAE / rank corr / places moved, real 2.75)
+#             0.6 -> 2.42 / 0.765 / 2.73   1.3 -> 2.30 / 0.786 / 2.48
+#             1.8 -> 2.25 / 0.785 / 2.39
+#   in-race   (dry, MAE / Spearman)
+#             0.6 -> 1.99 / 0.869   1.0 -> 1.94 / 0.876   1.3 -> 1.92 / 0.878
+# Past 1.3 the rank correlation stops improving while cars move ever less
+# than they really do (2.39 places at 1.8 against 2.75), so 1.3.
+# With qualifying in the pre-race pace (race_plan/weekend_pace.py) the
+# pre-race sweep goes flat — 0.4 -> 2.23 / 0.790, 1.3 -> 2.16 / 0.792,
+# grid slope -0.027 -> +0.006 — and 1.3 stays. ("Places moved" then reads
+# 2.12 against 2.75, but an expected finish, an average over simulations,
+# always moves less from the grid than any one real result does.)
 DIRTY_AIR_GAP_SECONDS = 1.0
 DIRTY_AIR_LOSS_SECONDS = 0.142
 FOLLOW_GAP_SECONDS = 0.5
@@ -276,7 +294,7 @@ FOLLOW_GAP_SECONDS = 0.5
 SC_BUNCHES_FIELD = False
 SC_BUNCH_GAP_SECONDS = 0.8  # spacing behind the leader when bunching is on
 MEDIAN_OVERTAKING_RATE = 0.17
-PASSING_DELTA_BASE_SECONDS = 0.6
+PASSING_DELTA_BASE_SECONDS = 1.3
 PASSING_DELTA_BOUNDS = (0.15, 4.0)
 
 
@@ -302,6 +320,10 @@ class SharedContext:
     rival_retire_lap: np.ndarray  # shape (n_simulations, n_rivals), lap index they retire on; n_laps = never
     pace_error: np.ndarray  # shape (n_simulations,), seconds per lap — see build_shared_context
     rival_pace_error: np.ndarray  # shape (n_simulations, n_rivals), same units
+    # Pre-race only: each rival's stop laps, drawn per simulation from real
+    # stop patterns (tyre_baselines.historical_stop_patterns). None means
+    # the rule, tyre_baselines.rival_stop_laps.
+    rival_pit: np.ndarray | None = None  # shape (n_simulations, n_laps, n_rivals), bool
 
     @property
     def rival_retires(self) -> np.ndarray:
@@ -394,6 +416,7 @@ def build_shared_context(
     n_simulations: int,
     rng: np.random.Generator,
     pre_race: bool = False,
+    stop_patterns: StopPatterns | None = None,
 ) -> SharedContext:
     """Computed once per race state, reused for every candidate strategy —
     the safety-car draws, lap-time noise, retirement draws and pace-estimate
@@ -402,6 +425,11 @@ def build_shared_context(
 
     `pre_race` (race_plan/) draws pace errors from the pre-race
     distribution: nothing about any car's pace today has been seen yet.
+
+    `stop_patterns` (pre-race) gives each rival, in each simulation, the
+    stops of a car that really raced here — see
+    tyre_baselines.historical_stop_patterns for why the rule can't be used
+    for a whole field at once.
     """
     n_laps = state.race_total_laps - state.current_lap
     n_rivals = len(rivals)
@@ -451,6 +479,10 @@ def build_shared_context(
     # this driver is uncertain about is equally uncertain for everyone).
     errors = sample_pace_errors(rng, (n_simulations, 1 + n_rivals), pre_race)
 
+    rival_pit = None
+    if stop_patterns is not None and n_rivals:
+        rival_pit = sample_rival_pit_laps(state, stop_patterns, n_simulations, n_rivals, rng)
+
     return SharedContext(
         n_laps=n_laps,
         sc_occurs=sc_occurs,
@@ -458,7 +490,30 @@ def build_shared_context(
         rival_retire_lap=retire_lap,
         pace_error=errors[:, 0],
         rival_pace_error=errors[:, 1:],
+        rival_pit=rival_pit,
     )
+
+
+def sample_rival_pit_laps(
+    state: RaceState, patterns: StopPatterns, n_simulations: int, n_rivals: int, rng: np.random.Generator
+) -> np.ndarray:
+    """(n_simulations, n_laps, n_rivals) bool: a real car's stops for every
+    rival in every simulation, scaled from its race's distance to this one.
+    A stop that would land on the last lap, or before the current lap, is
+    dropped: neither is a stop anyone makes."""
+    n_laps = state.race_total_laps - state.current_lap
+    out = np.zeros((n_simulations, n_laps, n_rivals), dtype=bool)
+    pick = rng.integers(len(patterns.fractions), size=(n_simulations, n_rivals))
+    for k, fractions in enumerate(patterns.fractions):
+        chosen = pick == k
+        if not chosen.any():
+            continue
+        for fraction in fractions:
+            lap = int(round(fraction * state.race_total_laps))
+            index = lap - state.current_lap - 1
+            if 0 <= index < n_laps - 1:
+                out[:, index, :] |= chosen
+    return out
 
 
 def passing_delta_seconds(overtaking_rate: float | None) -> float:
@@ -566,6 +621,95 @@ def _clean_pace(pace: float) -> float:
 BATCH_ROWS = 12_000
 
 
+@dataclass
+class _Field:
+    pit_loss_s: float
+    pit: np.ndarray  # (n_simulations, n_laps, n_cars); column 0 (our car) left at zero
+    pace: np.ndarray  # (n_simulations, n_cars); column 0 left at zero
+    start_times: np.ndarray  # (n_cars,)
+    retire_lap: np.ndarray  # (n_simulations, n_cars)
+    passing_delta: float
+
+
+def _field(state: RaceState, rivals: list[RivalTrend], shared: SharedContext) -> _Field:
+    """Everything about a simulated race except our car's plan and pace."""
+    n_simulations = shared.sc_occurs.shape[0]
+    n_laps = shared.n_laps
+    n_cars = 1 + len(rivals)
+    pit_loss_s = typical_pit_loss_seconds(state.circuit_id)
+
+    # The field: rivals charged the stops their stints need
+    # (tyre_baselines.rival_stop_laps) — or, before the race, a real car's
+    # stops here (shared.rival_pit) — each projecting its pace (already
+    # tyre-adjusted by the caller in-race, tyre_pace.tyre_adjusted_rivals)
+    # plus its share of the pace-estimate uncertainty. Round 6: both sides
+    # project across the full remaining race.
+    field_pit = np.zeros((n_simulations, n_laps, n_cars), dtype=np.float32)
+    if shared.rival_pit is not None:
+        field_pit[:, :, 1:] = shared.rival_pit * pit_loss_s
+    else:
+        for j, rival in enumerate(rivals, start=1):
+            for stop in rival_stop_laps(state.circuit_id, rival.compound, rival.tyre_age, n_laps):
+                field_pit[:, stop, j] = pit_loss_s
+    # A rival stopping under a safety car saves the same time ours does
+    # (_our_pit_loss). Until this, only our car ever got the discount.
+    field_pit *= np.where(shared.sc_occurs, SC_PIT_DISCOUNT, 1.0).astype(np.float32)[:, :, None]
+    field_pace = np.zeros((n_simulations, n_cars))
+    for j, rival in enumerate(rivals, start=1):
+        trend = rival.recent_pace_delta if np.isfinite(rival.recent_pace_delta) else 0.0
+        field_pace[:, j] = trend + shared.rival_pace_error[:, j - 1]
+
+    start_times = np.array([state.gap_to_leader] + [r.gap_to_leader for r in rivals], dtype=float)
+    finite = start_times[np.isfinite(start_times)]
+    start_times = np.where(np.isfinite(start_times), start_times, finite.max() if finite.size else 0.0)
+    retire_lap = np.concatenate([np.full((n_simulations, 1), n_laps), shared.rival_retire_lap], axis=1)
+    return _Field(
+        pit_loss_s=pit_loss_s,
+        pit=field_pit,
+        pace=field_pace,
+        start_times=start_times,
+        retire_lap=retire_lap,
+        passing_delta=passing_delta_seconds(state.historical_overtaking_rate),
+    )
+
+
+def simulate_typical_strategy(
+    state: RaceState,
+    rivals: list[RivalTrend],
+    shared: SharedContext,
+    pace: float,
+    stop_patterns: StopPatterns | None,
+    rng: np.random.Generator,
+) -> SimulationResult:
+    """Our car on a typical strategy for this circuit: in each simulation,
+    the stops of a real car that raced here — exactly as every rival gets
+    them — at `pace`, its season form.
+
+    This is our car treated as one of the field, so it's the number
+    race_plan/grid_sensitivity.py validates (the whole-grid check). A
+    candidate plan's expected finish is this plus whatever the simulation
+    credits the plan with, and that credit is what real races don't bear
+    out — see race_plan/plan.py's STRATEGY_EDGE_EVIDENCE.
+    """
+    n_simulations = shared.sc_occurs.shape[0]
+    f = _field(state, rivals, shared)
+    if stop_patterns is not None:
+        ours = sample_rival_pit_laps(state, stop_patterns, n_simulations, 1, rng)[:, :, 0]
+    else:
+        ours = np.zeros((n_simulations, shared.n_laps), dtype=bool)
+        ours[:, rival_stop_laps(state.circuit_id, state.compound, state.tyre_age, shared.n_laps)] = True
+    discount = np.where(shared.sc_occurs, SC_PIT_DISCOUNT, 1.0)
+    f.pit[:, :, 0] = ours * f.pit_loss_s * discount
+    f.pace[:, 0] = _clean_pace(pace) + shared.pace_error
+    final_times = run_race(f.start_times, f.pace, shared.noise, f.pit, f.retire_lap, shared.sc_occurs, f.passing_delta)
+    positions = 1 + (final_times[:, 1:] < final_times[:, :1]).sum(axis=1)
+    return SimulationResult(
+        strategy=Strategy(pit_plan=(), label="Typical strategy here"),
+        final_positions=positions,
+        safety_car_occurred=shared.sc_occurs.any(axis=1),
+    )
+
+
 def simulate_strategies(
     state: RaceState,
     strategies: list[Strategy],
@@ -581,29 +725,9 @@ def simulate_strategies(
     candidate sees the same shared draws (common random numbers), tiled.
     """
     n_simulations = shared.sc_occurs.shape[0]
-    n_laps = shared.n_laps
-    n_cars = 1 + len(rivals)
-    pit_loss_s = typical_pit_loss_seconds(state.circuit_id)
-
-    # The field: rivals charged the stops their stints need
-    # (tyre_baselines.rival_stop_laps), each projecting its pace (already
-    # tyre-adjusted by the caller, tyre_pace.tyre_adjusted_rivals) plus its
-    # share of the pace-estimate uncertainty. Round 6: both sides project
-    # across the full remaining race.
-    field_pit = np.zeros((n_simulations, n_laps, n_cars), dtype=np.float32)
-    for j, rival in enumerate(rivals, start=1):
-        for stop in rival_stop_laps(state.circuit_id, rival.compound, rival.tyre_age, n_laps):
-            field_pit[:, stop, j] = pit_loss_s
-    field_pace = np.zeros((n_simulations, n_cars))
-    for j, rival in enumerate(rivals, start=1):
-        trend = rival.recent_pace_delta if np.isfinite(rival.recent_pace_delta) else 0.0
-        field_pace[:, j] = trend + shared.rival_pace_error[:, j - 1]
-
-    start_times = np.array([state.gap_to_leader] + [r.gap_to_leader for r in rivals], dtype=float)
-    finite = start_times[np.isfinite(start_times)]
-    start_times = np.where(np.isfinite(start_times), start_times, finite.max() if finite.size else 0.0)
-    retire_lap = np.concatenate([np.full((n_simulations, 1), n_laps), shared.rival_retire_lap], axis=1)
-    delta = passing_delta_seconds(state.historical_overtaking_rate)
+    f = _field(state, rivals, shared)
+    pit_loss_s, field_pit, field_pace = f.pit_loss_s, f.pit, f.pace
+    start_times, retire_lap, delta = f.start_times, f.retire_lap, f.passing_delta
 
     results: list[SimulationResult] = []
     chunk = max(1, BATCH_ROWS // max(n_simulations, 1))

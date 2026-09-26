@@ -383,6 +383,14 @@ export type RacePlan = {
   win_probability: number;
   points_probability: number;
   expected_points: number;
+  /** The same car on a typical strategy for this circuit — the validated number. */
+  typical_expected_finish: number | null;
+  typical_win_probability: number | null;
+  typical_points_probability: number | null;
+  typical_expected_points: number | null;
+  strategy_edge_note: string;
+  rival_stops_source: string;
+  qualifying_in_pace: boolean;
   starting_options: { starting_compound: string; plan: string; strategy_score: number; expected_finish: number; expected_points: number }[];
   tyres: {
     allocation: Record<string, number>;

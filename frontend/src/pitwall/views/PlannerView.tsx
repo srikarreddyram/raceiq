@@ -29,6 +29,57 @@ function daysUntil(date: string): string {
   return days <= 0 ? "RACE DAY" : days === 1 ? "TOMORROW" : `IN ${days} DAYS`;
 }
 
+/**
+ * The headline: where this car finishes on a typical strategy here — the
+ * number that's checked against real results (race_plan/grid_sensitivity.py).
+ */
+function Outcome({ plan: p }: { plan: RacePlan }) {
+  const typical = p.typical_expected_finish != null;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, auto)", gap: 26, alignItems: "end" }}>
+      <Stat label="Expected finish" value={`P${(typical ? p.typical_expected_finish! : p.expected_finish).toFixed(1)}`} size={30} />
+      <Stat label="Win" value={pct(typical ? p.typical_win_probability! : p.win_probability)} size={30} />
+      <Stat label="Points" value={pct(typical ? p.typical_points_probability! : p.points_probability)} size={30} />
+      <Stat label="Exp. points" value={(typical ? p.typical_expected_points! : p.expected_points).toFixed(1)} size={30} />
+    </div>
+  );
+}
+
+/**
+ * What the simulation credits this plan with over a typical strategy, next
+ * to what real races say that credit is worth. The plan is still the call
+ * to make; the extra places are not a forecast.
+ */
+function PlanEdge({ plan: p }: { plan: RacePlan }) {
+  if (p.typical_expected_finish == null) return null;
+  const edge = p.typical_expected_finish - p.expected_finish;
+  return (
+    <div
+      style={{
+        marginTop: 16,
+        paddingTop: 14,
+        borderTop: `1px solid ${C.edge}`,
+        display: "flex",
+        gap: 18,
+        alignItems: "baseline",
+        flexWrap: "wrap",
+      }}
+    >
+      <div style={{ fontFamily: F.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.faint }}>
+        On this plan
+      </div>
+      <div style={{ ...NUM, fontSize: 15, color: C.text }}>
+        P{p.expected_finish.toFixed(1)}{" "}
+        <span style={{ color: C.muted, fontSize: 13 }}>
+          in the simulation ({edge >= 0 ? "+" : "−"}
+          {Math.abs(edge).toFixed(1)} places)
+        </span>
+      </div>
+      <div style={{ fontFamily: F.body, fontSize: 12.5, color: C.muted, lineHeight: 1.55, flex: "1 1 320px" }}>{p.strategy_edge_note}</div>
+    </div>
+  );
+}
+
 /** The F1 graphic for a tyre: a ring in the compound colour, its initial inside. */
 export function TyreIcon({ compound, size = 26 }: { compound: string; size?: number }) {
   const colour = compoundColor(compound);
@@ -435,13 +486,9 @@ export function PlannerView() {
                   {p.stops.length === 0 ? "No stop" : `${p.stops.length}-stop`} · start on {p.starting_compound.toLowerCase()}
                 </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, auto)", gap: 26, alignItems: "end" }}>
-                <Stat label="Expected finish" value={`P${p.expected_finish.toFixed(1)}`} size={30} />
-                <Stat label="Win" value={pct(p.win_probability)} size={30} />
-                <Stat label="Points" value={pct(p.points_probability)} size={30} />
-                <Stat label="Exp. points" value={p.expected_points.toFixed(1)} size={30} />
-              </div>
+              <Outcome plan={p} />
             </div>
+            <PlanEdge plan={p} />
           </Card>
 
           <Card style={{ padding: "20px 22px" }}>
@@ -461,9 +508,11 @@ export function PlannerView() {
           <TyreSets plan={p} />
 
           <div style={{ fontFamily: F.body, fontSize: 12, color: C.faint, lineHeight: 1.6 }}>
-            {p.n_simulations.toLocaleString()} simulated races per finalist strategy, lap by lap with traffic and track position. Rivals are
-            projected from season form and charged the stops their tyres need. Pace differences between strategies come from measured tyre
-            wear for this season.{p.is_future ? " Planned before the race: the entry list, form and car profiles are as they stand after the latest round." : ""}
+            {p.n_simulations.toLocaleString()} simulated races per finalist strategy, lap by lap with traffic and track position. Every car's
+            pace is its season form{p.qualifying_in_pace ? ", sharpened by this weekend's qualifying" : " (qualifying not run yet)"}; rivals
+            pit like real cars here ({p.rival_stops_source === "rule" ? "no race history at this circuit, so when their tyres run out" : p.rival_stops_source}).
+            Pace differences between strategies come from measured tyre wear for this season.
+            {p.is_future ? " Planned before the race: the entry list, form and car profiles are as they stand after the latest round." : ""}
           </div>
         </div>
       )}

@@ -499,7 +499,7 @@ class RacePlanResponse(BaseModel):
     team_id: str
     grid_position: int
     actual_grid_position: int | None
-    grid_is_expected: bool  # an unrun race's slot from season-average grid, not chosen
+    grid_is_expected: bool  # an unrun race's slot from season-average grid (qualifying not run), not chosen
     total_laps: int
     laps_known: bool  # False only for a first race at a circuit
     is_future: bool
@@ -510,10 +510,22 @@ class RacePlanResponse(BaseModel):
     compound_sequence: list[str]
     compound_choice_is_decisive: bool
     stops: list[PlannedStopOut]
+    # The recommended plan, as the simulation scores it — including the
+    # credit it gives the plan's strategy, which real races don't bear out
+    # in full (strategy_edge_note).
     expected_finish: float
     win_probability: float
     points_probability: float
     expected_points: float
+    # The same car on a typical strategy for this circuit — the validated
+    # number (race_plan/grid_sensitivity.py).
+    typical_expected_finish: float | None
+    typical_win_probability: float | None
+    typical_points_probability: float | None
+    typical_expected_points: float | None
+    strategy_edge_note: str
+    rival_stops_source: str  # where the field's stops come from
+    qualifying_in_pace: bool  # whether this weekend's qualifying sharpens every car's pace
     starting_options: list[StartingOption]
     tyres: TyrePlanOut
 

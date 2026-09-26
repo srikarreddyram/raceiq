@@ -20,9 +20,12 @@ knowable on Saturday night:
                    1.5s back, P10 11.4s, P20 23.2s). Measured, not assumed.
 
   pace             each driver's season-to-date average pace delta, over
-                   races strictly before this one. Season form is the
-                   stable thing a strategist would actually reason from,
-                   and restricting it to prior races keeps a pre-race plan
+                   races strictly before this one, sharpened by this
+                   weekend's qualifying gap once there is one
+                   (race_plan/weekend_pace.py). Season form is the stable
+                   thing a strategist reasons from; qualifying is what
+                   they know about this track by Saturday night; and
+                   restricting form to prior races keeps a pre-race plan
                    from reading results it couldn't have had.
 """
 
@@ -33,7 +36,9 @@ from functools import lru_cache
 import pandas as pd
 
 from models.common.db import get_connection
+from race_plan.weekend_pace import qualifying_gaps, weekend_pace
 from strategy_engine.field import RivalTrend
+from strategy_engine.tyre_baselines import StopPatterns, historical_stop_patterns
 
 # Fallback for a grid slot with no measured history (deep grids in older
 # seasons are thin). Roughly the per-position spacing the table shows.
@@ -136,6 +141,7 @@ def build_pre_race_field(race_id: str, exclude_driver_id: str) -> list[RivalTren
         return []
 
     form = _season_form(season, str(race_date[0])) if race_date else {}
+    quali = qualifying_gaps(race_id)
     default_compound = common_start[0] if common_start else "MEDIUM"
 
     rivals = []
@@ -149,7 +155,7 @@ def build_pre_race_field(race_id: str, exclude_driver_id: str) -> list[RivalTren
                 # No prior races this season (opening round, or a debutant)
                 # means no form to lean on — field-average pace is the
                 # neutral assumption rather than a guess in either direction.
-                recent_pace_delta=form.get(row.driver_id, 0.0) if not pd.isna(form.get(row.driver_id, 0.0)) else 0.0,
+                recent_pace_delta=weekend_pace(_form_or_zero(form, row.driver_id), quali.get(row.driver_id)),
                 compound=default_compound,
                 tyre_age=0.0,
             )
@@ -157,13 +163,18 @@ def build_pre_race_field(race_id: str, exclude_driver_id: str) -> list[RivalTren
     return rivals
 
 
-def driver_season_form(race_id: str, driver_id: str) -> float:
-    """One driver's season-to-date pace delta, from the same source and
-    with the same prior-races-only restriction as the rivals'.
+def _form_or_zero(form: dict[str, float], driver_id: str) -> float:
+    value = form.get(driver_id, 0.0)
+    return 0.0 if value is None or pd.isna(value) else float(value)
+
+
+def driver_race_pace(race_id: str, driver_id: str) -> float:
+    """One driver's expected race pace (race_plan/weekend_pace.py), from
+    the same season form and qualifying the rivals' comes from.
 
     Used as the planner's pace anchor so both sides of the comparison come
-    from one estimator. Returns 0.0 — field-average pace — when there are
-    no prior races this season to learn from, which is the neutral
+    from one estimator. Field-average pace (0.0) stands in for form when
+    there are no prior races this season to learn from — the neutral
     assumption rather than a flattering or pessimistic guess.
     """
     season, _ = (int(part) for part in race_id.split("_"))
@@ -172,7 +183,27 @@ def driver_season_form(race_id: str, driver_id: str) -> float:
         race_date = con.execute("SELECT date FROM silver.races WHERE race_id = ?", [race_id]).fetchone()
     finally:
         con.close()
-    if not race_date:
-        return 0.0
-    value = _season_form(season, str(race_date[0])).get(driver_id, 0.0)
-    return 0.0 if pd.isna(value) else float(value)
+    form = _season_form(season, str(race_date[0])) if race_date else {}
+    return weekend_pace(_form_or_zero(form, driver_id), qualifying_gaps(race_id).get(driver_id))
+
+
+def stop_patterns_for_race(race_id: str) -> StopPatterns | None:
+    """The real stop patterns the pre-race field is drawn from (see
+    tyre_baselines.historical_stop_patterns), from races before this one —
+    run or unrun, so it reads the calendar rather than the results."""
+    con = get_connection()
+    try:
+        row = con.execute(
+            """
+            SELECT circuit_id, date FROM silver.calendar WHERE race_id = ?
+            UNION ALL
+            SELECT circuit_id, date FROM silver.races WHERE race_id = ?
+            LIMIT 1
+            """,
+            [race_id, race_id],
+        ).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return None
+    return historical_stop_patterns(row[0], str(row[1]))
