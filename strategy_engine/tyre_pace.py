@@ -75,6 +75,9 @@ def wear_rates(season: int | None) -> dict[str, float]:
 CIRCUIT_WEAR = True
 
 
+WEAR_SCALE = 1.0
+
+
 @lru_cache(maxsize=None)
 def race_wear(race_id: str) -> dict[str, float]:
     """Wear per compound for one race: its season's rates, scaled by its
@@ -97,7 +100,7 @@ def race_wear(race_id: str) -> dict[str, float]:
         con.close()
     if not row:
         return wear
-    factor = circuit_wear_factor(row[0], str(row[1]))
+    factor = circuit_wear_factor(row[0], str(row[1])) * WEAR_SCALE
     return {c: w * factor for c, w in wear.items()}
 
 

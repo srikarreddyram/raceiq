@@ -32,6 +32,17 @@ alone and is kept: this estimator's errors over the same seasons span
 the same range (1st-99th percentile -1.13 to 1.27 s/lap, against -1.15
 to 1.31). Its gain is in the middle of the distribution, on 2025.
 
+Checked on 2026, the new regulations, without refitting: MAE 0.407 s/lap
+against 0.406 for weights fitted on 2025 alone — the weights carry over.
+(Pace itself is harder to call in 2026: 0.41 against 0.29 in 2025.)
+
+Practice long-run pace was tried as a third input and left out. Each
+driver's long runs in FP1-FP3 (five or more consecutive clean laps),
+against the field's, over 28 weekends of 2025-26: correlation with race
+pace 0.21, against 0.86 for form and 0.85 for qualifying, and adding it
+moved the error by 0.001-0.009 s/lap. Fuel loads and engine modes in
+practice aren't known, and raw lap times can't see through them.
+
 Usage (re-fit and print the coefficients and error spread):
     uv run python -m race_plan.weekend_pace
 """
