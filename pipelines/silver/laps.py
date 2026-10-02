@@ -17,6 +17,15 @@ Three things happen here that don't happen in Bronze:
    correct once a car is lapped. A precise version would use OpenF1's
    `/intervals` endpoint (not yet ingested) rather than derive it from lap
    times.
+4. **Stints that are really stints**: FastF1 starts a new `Stint` every
+   time a car goes through the pit lane, tyre change or not. When a race
+   is neutralised and the field is routed through the pits — Canada 2025
+   finished that way — every car picks up a "stint" per lap on the same
+   tyres. 540 of 6,480 stint changes in 2018-2026 are like that (12% in
+   2025), in 64 of 187 races, and everything that counts stops from stint
+   numbers counted them: rival stop patterns, stint-length limits, the
+   validations. Here a stint changes only when the tyres do (see
+   `_real_stint_numbers`).
 """
 
 from __future__ import annotations
@@ -30,6 +39,25 @@ from pipelines.silver.common import write_silver_table
 from pipelines.silver.id_mappings import build_team_id_map
 
 logger = logging.getLogger(__name__)
+
+
+def _real_stint_numbers(laps):
+    """Stint numbers that count tyre changes, not pit-lane passages.
+
+    A FastF1 stint change is kept unless the tyres are provably the same
+    set: same compound, and a tyre age that carried on rising across it.
+    An unknown age or compound on either side keeps FastF1's change.
+    `laps` must be sorted by lap within (race_id, driver).
+    """
+    by_car = laps.groupby(["race_id", "driver"], sort=False)
+    prev_stint = by_car["stint_number"].shift(1)
+    prev_age = by_car["tyre_age_laps"].shift(1)
+    prev_compound = by_car["compound"].shift(1)
+    changed = laps["stint_number"].notna() & prev_stint.notna() & (laps["stint_number"] != prev_stint)
+    same_tyres = (laps["tyre_age_laps"] > prev_age) & (laps["compound"] == prev_compound)
+    real_change = (changed & ~same_tyres.fillna(False)).astype("int64")
+    stint = 1 + real_change.groupby([laps["race_id"], laps["driver"]], sort=False).cumsum()
+    return stint.where(laps["stint_number"].notna()).astype("Int64")
 
 
 def build(con: duckdb.DuckDBPyConnection) -> None:
@@ -53,6 +81,7 @@ def build(con: duckdb.DuckDBPyConnection) -> None:
     laps["team_id"] = laps["team"].map(team_map)
 
     laps = laps.sort_values(["race_id", "driver", "lap_number"])
+    laps["stint_number"] = _real_stint_numbers(laps)
     laps["_next_pit_out"] = laps.groupby(["race_id", "driver"])["pit_out_time_seconds"].shift(-1)
     laps["pit_stop_duration"] = np.where(
         laps["pit_in_time_seconds"].notna(), laps["_next_pit_out"] - laps["pit_in_time_seconds"], np.nan

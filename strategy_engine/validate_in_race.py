@@ -16,13 +16,37 @@ Brier score of P(win) against who actually won.
 The classifier cross-checks in recommendation/reasoning.py are useful
 smoke alarms, but they are models too; this is ground truth.
 
+`--oracle-rivals` gives every rival the stops it really went on to make,
+instead of the simulation's guess at them. It isn't a fair test — nobody
+knows a rival's stops in advance — it's a ceiling: the gap between it and
+the normal run is what guessing rivals' strategy costs.
+
+`--season` and `--rounds` pick the races (default: ten rounds of 2025).
+Races with rain or a red flag are reported separately, found from the lap
+data: both rewrite everyone's strategy in ways no snapshot predicts.
+
+Where it stands (expected-finish MAE in places; "clean" leaves out races
+with rain or a red flag):
+
+                         simulation   stay put   oracle rivals
+    2025, 10 rounds         1.84        2.27         1.71
+    2025, clean (8)         1.79        2.27         1.67
+    2026, 15 rounds         2.39        1.88         2.10
+    2026, clean (12)        1.97        1.87         1.80
+
+On 2026 — new regulations, and cars that hold position far more after
+40% distance than in 2025 — the simulation does not beat "finish where
+you are now". Knowing rivals' stops would put it just ahead.
+
 Usage:
-    uv run python -m strategy_engine.validate_in_race [--delta 0.6] [--bunch]
+    uv run python -m strategy_engine.validate_in_race [--delta 0.6] [--bunch] [--oracle-rivals]
+                                                      [--season 2026] [--rounds 1-15]
 """
 
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -35,9 +59,12 @@ from strategy_engine.search.candidates import Strategy
 SEASON = 2025
 ROUNDS = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
 SNAPSHOT_FRACTION = 0.4
-# Weather decided these: every car's stops followed the rain, which no
-# strategy model predicts from a mid-race snapshot. Reported separately.
-WET_RACES = {"2025_10"}
+# Races with rain or a red flag are reported separately (disrupted_races):
+# every car's stops follow the weather or the stoppage, which no strategy
+# model predicts from a mid-race snapshot. (This used to be a hand-kept
+# list holding one race, Canada 2025 — which was dry. Its huge errors came
+# from phantom stops in the timing data, since fixed in
+# pipelines/silver/laps.py.)
 N_SIMULATIONS = 400
 
 
@@ -60,7 +87,52 @@ def _actual_plan(race_rows: pd.DataFrame, driver_id: str, snapshot_lap: int) -> 
     return tuple(plan)
 
 
-def run(delta: float | None = None, bunch: bool = False) -> pd.DataFrame:
+def disrupted_races(season: int) -> set[str]:
+    """Races with rain or a red flag at any point."""
+    con = get_connection()
+    try:
+        rows = con.execute(
+            """
+            SELECT race_id FROM gold.lap_features WHERE race_id LIKE ?
+            GROUP BY race_id
+            HAVING BOOL_OR(COALESCE(rainfall_flag, FALSE)) OR BOOL_OR(COALESCE(red_flag_active, FALSE))
+            """,
+            [f"{season}_%"],
+        ).fetchall()
+    finally:
+        con.close()
+    return {r[0] for r in rows}
+
+
+def _oracle_rivals(field: list, race_rows: pd.DataFrame, lap: int, total: int, wear: dict, n_simulations: int):
+    """Each rival on the stops it really made: its pace over the remaining
+    race (age-neutral recent pace plus its real plan's tyre cost) and its
+    pit laps, in the shape SharedContext.rival_pit takes."""
+    import strategy_engine.simulation.monte_carlo as mc
+    from strategy_engine.tyre_pace import age_neutral, tyre_cost
+
+    n_laps = total - lap
+    pit = np.zeros((n_simulations, n_laps, len(field)), dtype=bool)
+    compounds = np.zeros((n_simulations, len(field), mc.MAX_STINTS), dtype=np.int8)
+    rivals = []
+    for j, rival in enumerate(field):
+        plan = dict(_actual_plan(race_rows, rival.driver_id, lap))
+        compound, age, costs = rival.compound, rival.tyre_age, []
+        for race_lap in range(lap + 1, total + 1):
+            if race_lap in plan:
+                compound, age = plan[race_lap], 0.0
+                pit[:, race_lap - lap - 1, j] = True
+            else:
+                age += 1
+            costs.append(tyre_cost(compound, age, wear))
+        recent = rival.recent_pace_delta if np.isfinite(rival.recent_pace_delta) else 0.0
+        pace = age_neutral(recent, rival.compound, rival.tyre_age, wear) + (float(np.mean(costs)) if costs else 0.0)
+        rivals.append(replace(rival, recent_pace_delta=pace))
+        compounds[:, j, :] = mc._stint_row([rival.compound] + [plan[k] for k in sorted(plan)])
+    return rivals, pit, compounds
+
+
+def run(delta: float | None = None, bunch: bool = False, oracle_rivals: bool = False) -> pd.DataFrame:
     import strategy_engine.simulation.monte_carlo as mc
     from strategy_engine.engine import candidate_pace_overrides
     from strategy_engine.field import build_field_snapshot_from_gold, driver_recent_pace
@@ -99,9 +171,15 @@ def run(delta: float | None = None, bunch: bool = False) -> pd.DataFrame:
                 state = RaceState.from_gold_row(race_rows.loc[snap.Index], race_total_laps=total)
                 season = int(race_id.split("_")[0])
                 wear = race_wear(race_id)
-                rivals = tyre_adjusted_rivals(build_field_snapshot_from_gold(race_id, lap, snap.driver_id), state, season, wear)
+                field = build_field_snapshot_from_gold(race_id, lap, snap.driver_id)
                 strategy = Strategy(pit_plan=_actual_plan(race_rows, snap.driver_id, lap), label="actual")
+                if oracle_rivals:
+                    rivals, rival_pit, rival_compounds = _oracle_rivals(field, race_rows, lap, total, wear, N_SIMULATIONS)
+                else:
+                    rivals = tyre_adjusted_rivals(field, state, season, wear)
                 shared = mc.build_shared_context(state, rivals, N_SIMULATIONS, np.random.default_rng(3), **mc.race_model(season, wear))
+                if oracle_rivals:
+                    shared = replace(shared, rival_pit=rival_pit, rival_compounds=rival_compounds)
                 (pace,) = candidate_pace_overrides(state, [strategy], driver_recent_pace(race_id, lap, snap.driver_id), season, wear)
                 scored = score_strategy(mc.simulate_strategy(state, strategy, rivals, shared, pace_deviation_override=pace))
                 rows.append(
@@ -145,13 +223,20 @@ def report(df: pd.DataFrame) -> dict:
 
 
 def main() -> None:
+    global SEASON, ROUNDS
     delta = float(sys.argv[sys.argv.index("--delta") + 1]) if "--delta" in sys.argv else None
-    df = run(delta, bunch="--bunch" in sys.argv)
+    if "--season" in sys.argv:
+        SEASON = int(sys.argv[sys.argv.index("--season") + 1])
+    if "--rounds" in sys.argv:
+        first, _, last = sys.argv[sys.argv.index("--rounds") + 1].partition("-")
+        ROUNDS = list(range(int(first), int(last or first) + 1))
+    df = run(delta, bunch="--bunch" in sys.argv, oracle_rivals="--oracle-rivals" in sys.argv)
+    print(f"{SEASON}, rounds {ROUNDS[0]}-{ROUNDS[-1]}" + ("  (ORACLE: rivals on their real stops)" if "--oracle-rivals" in sys.argv else ""))
     report(df)
-    wet = df.race_id.isin(WET_RACES)
-    if wet.any():
-        print(f"\nexcluding wet races {sorted(WET_RACES)}:")
-        report(df[~wet])
+    disrupted = df.race_id.isin(disrupted_races(SEASON))
+    if disrupted.any() and (~disrupted).any():
+        print(f"\nexcluding races with rain or a red flag ({df[disrupted].race_id.nunique()} of {df.race_id.nunique()}):")
+        report(df[~disrupted])
 
 
 if __name__ == "__main__":
