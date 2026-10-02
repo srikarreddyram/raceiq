@@ -15,13 +15,17 @@ import numpy as np
 from strategy_engine.field import build_field_snapshot_from_gold, driver_recent_pace
 from strategy_engine.scoring.score import score_strategy
 from strategy_engine.search.candidates import generate_candidates
-from strategy_engine.simulation.monte_carlo import _deterministic_tyre_plan, build_shared_context, simulate_strategies
+from strategy_engine.simulation.monte_carlo import _deterministic_tyre_plan, build_shared_context, race_model, simulate_strategies
 from strategy_engine.state import RaceState
-from strategy_engine.tyre_pace import age_neutral, plan_cost, tyre_adjusted_rivals, wear_rates
+from strategy_engine.tyre_pace import age_neutral, plan_cost, race_wear, tyre_adjusted_rivals, wear_rates
 
 
 def candidate_pace_overrides(
-    state: RaceState, strategies: list, pace_anchor: float | None, season: int | None = None
+    state: RaceState,
+    strategies: list,
+    pace_anchor: float | None,
+    season: int | None = None,
+    wear: dict | None = None,
 ) -> list[float]:
     """Our car's per-lap pace for each strategy: our recent pace — measured
     exactly as every rival's is (field.driver_recent_pace) — made
@@ -37,7 +41,7 @@ def candidate_pace_overrides(
         pace_anchor = float(state.lap_time_seconds - state.field_avg_lap_time_seconds)
         if not np.isfinite(pace_anchor):
             pace_anchor = 0.0
-    wear = wear_rates(season)
+    wear = wear if wear is not None else wear_rates(season)
     level = age_neutral(pace_anchor, state.compound, state.tyre_age, wear)
     return [level + plan_cost(_deterministic_tyre_plan(state, s), wear) for s in strategies]
 
@@ -54,6 +58,7 @@ def recommend_strategy(
     pace_anchor: float | None = None,
     season: int | None = None,
     exclude_race_id: str | None = None,
+    wear: dict | None = None,
 ) -> dict:
     """Search, simulate, score, explain.
 
@@ -78,11 +83,14 @@ def recommend_strategy(
     if not candidates:
         raise RuntimeError("No feasible strategy candidates found for this race state")
 
-    rivals = tyre_adjusted_rivals(rivals, state, season)
-    overrides = dict(zip(candidates, candidate_pace_overrides(state, candidates, pace_anchor, season)))
+    # The race's own wear (circuit-scaled) when the caller knows the race.
+    if wear is None:
+        wear = race_wear(exclude_race_id) if exclude_race_id else wear_rates(season)
+    rivals = tyre_adjusted_rivals(rivals, state, season, wear)
+    overrides = dict(zip(candidates, candidate_pace_overrides(state, candidates, pace_anchor, season, wear)))
 
     def score_all(strategies: list, n: int) -> list:
-        shared = build_shared_context(state, rivals, n, rng)
+        shared = build_shared_context(state, rivals, n, rng, **race_model(season, wear))
         results = simulate_strategies(state, strategies, rivals, shared, [overrides[s] for s in strategies])
         return [score_strategy(r) for r in results]
 

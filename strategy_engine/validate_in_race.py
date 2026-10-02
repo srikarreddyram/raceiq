@@ -67,7 +67,7 @@ def run(delta: float | None = None, bunch: bool = False) -> pd.DataFrame:
     from strategy_engine.oracles import predict_expected_finish_now, predict_win_probability_now
     from strategy_engine.scoring.score import score_strategy
     from strategy_engine.state import RaceState
-    from strategy_engine.tyre_pace import tyre_adjusted_rivals
+    from strategy_engine.tyre_pace import race_wear, tyre_adjusted_rivals
 
     if delta is not None:
         mc.PASSING_DELTA_BASE_SECONDS = delta
@@ -98,10 +98,11 @@ def run(delta: float | None = None, bunch: bool = False) -> pd.DataFrame:
             try:
                 state = RaceState.from_gold_row(race_rows.loc[snap.Index], race_total_laps=total)
                 season = int(race_id.split("_")[0])
-                rivals = tyre_adjusted_rivals(build_field_snapshot_from_gold(race_id, lap, snap.driver_id), state, season)
+                wear = race_wear(race_id)
+                rivals = tyre_adjusted_rivals(build_field_snapshot_from_gold(race_id, lap, snap.driver_id), state, season, wear)
                 strategy = Strategy(pit_plan=_actual_plan(race_rows, snap.driver_id, lap), label="actual")
-                shared = mc.build_shared_context(state, rivals, N_SIMULATIONS, np.random.default_rng(3))
-                (pace,) = candidate_pace_overrides(state, [strategy], driver_recent_pace(race_id, lap, snap.driver_id), season)
+                shared = mc.build_shared_context(state, rivals, N_SIMULATIONS, np.random.default_rng(3), **mc.race_model(season, wear))
+                (pace,) = candidate_pace_overrides(state, [strategy], driver_recent_pace(race_id, lap, snap.driver_id), season, wear)
                 scored = score_strategy(mc.simulate_strategy(state, strategy, rivals, shared, pace_deviation_override=pace))
                 rows.append(
                     {

@@ -198,3 +198,84 @@ def team_tyre_report(team_id: str, season: int) -> dict:
         "fuel_track_seconds_per_lap": round(model["fuel_track_seconds_per_lap"], 4),
         "compounds": compounds,
     }
+
+
+# ---------------------------------------------------------------------------
+# How hard each circuit is on tyres.
+#
+# season_model's wear rates are one number per compound for the whole
+# season, but circuits differ hugely: measured on 2022-2025 hards, from
+# ~0.01 s/lap per lap of tyre age at Baku and Las Vegas to ~0.09 at
+# Bahrain. Priced at the season rate, a long stint costs the same
+# everywhere, and the planner's pit laps came out about a lap late on
+# average (see tyre_pace.CIRCUIT_WEAR for what the factor is worth).
+#
+# Each dry race gets a factor: the within-stint slope of fuel-corrected
+# lap time on (season wear rate x tyre age). A single race is noisy (some
+# have too little tyre-age spread to measure), so a circuit's factor is
+# its races' precision-weighted mean, shrunk towards the field's by how
+# noisy it is (empirical Bayes). Predicting each 2025 race's factor from
+# the four seasons before it, weighted by the race's information:
+#     season rate (factor 1)   MAE 0.575
+#     circuit raw mean         MAE 0.712   (the noise is real)
+#     circuit, shrunk          MAE 0.497
+# The factor is expressed relative to the field's mean, so it moves a
+# circuit's wear up or down without changing the season's overall level.
+# ---------------------------------------------------------------------------
+
+WEAR_FACTOR_SEASONS_BACK = 4
+MAX_WEAR_FIT_AGE = 35
+
+
+@lru_cache(maxsize=1)
+def _race_wear_factors() -> pd.DataFrame:
+    """Per dry race: the regression sums for its wear factor."""
+    con = get_connection()
+    try:
+        races = con.execute("SELECT race_id, circuit_id, date FROM silver.races").df()
+    finally:
+        con.close()
+    frames = []
+    for season in sorted(_green_laps()["season"].unique()):
+        try:
+            g = _corrected(int(season))
+            wear = season_model(int(season))["field_wear_seconds_per_lap"]
+        except ValueError:
+            continue
+        g = g[g["tyre_age"] <= MAX_WEAR_FIT_AGE].copy()
+        stint = ["race_id", "driver_id", "stint_number"]
+        g["x"] = g["compound"].map(wear) * (g["tyre_age"] - g.groupby(stint)["tyre_age"].transform("mean"))
+        g["y"] = g["corrected"] - g.groupby(stint)["corrected"].transform("mean")
+        g["xy"], g["xx"] = g["x"] * g["y"], g["x"] ** 2
+        per = g.groupby("race_id")[["xy", "xx"]].sum().reset_index()
+        per["season"] = int(season)
+        frames.append(per)
+    out = pd.concat(frames, ignore_index=True).merge(races, on="race_id")
+    out = out[out["xx"] > 0]
+    out["factor"] = out["xy"] / out["xx"]
+    out["date"] = out["date"].astype(str)
+    return out
+
+
+@lru_cache(maxsize=None)
+def circuit_wear_factor(circuit_id: str, before_date: str) -> float:
+    """How much harder than average this circuit is on tyres (1.0 =
+    average), from races in the WEAR_FACTOR_SEASONS_BACK seasons before
+    `before_date`. 1.0 for a circuit with no races in that window."""
+    table = _race_wear_factors()
+    year = int(str(before_date)[:4])
+    hist = table[(table["date"] < str(before_date)) & (table["season"] >= year - WEAR_FACTOR_SEASONS_BACK)]
+    if hist.empty or circuit_id not in set(hist["circuit_id"]):
+        return 1.0
+    by = hist.groupby("circuit_id").agg(xy=("xy", "sum"), xx=("xx", "sum"))
+    by["raw"] = by["xy"] / by["xx"]
+    # A race's factor ~ N(circuit's, sigma2 / xx): precision-weighted spread.
+    dev = hist.merge(by["raw"].rename("mean"), left_on="circuit_id", right_index=True)
+    sigma2 = float((dev["xx"] * (dev["factor"] - dev["mean"]) ** 2).sum() / max(len(dev) - len(by), 1))
+    by["var"] = sigma2 / by["xx"]
+    mu = float(hist["xy"].sum() / hist["xx"].sum())
+    weight = 1 / by["var"]
+    tau2 = max(float((((by["raw"] - mu) ** 2 - by["var"]) * weight).sum() / weight.sum()), 1e-4)
+    row = by.loc[circuit_id]
+    shrunk = mu + tau2 / (tau2 + row["var"]) * (row["raw"] - mu)
+    return float(np.clip(shrunk / mu, 0.25, 3.0)) if mu > 0 else 1.0

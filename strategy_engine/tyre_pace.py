@@ -41,7 +41,7 @@ from functools import lru_cache
 
 import numpy as np
 
-from car_profiles.degradation_curves import DRY_COMPOUNDS, season_model
+from car_profiles.degradation_curves import DRY_COMPOUNDS, circuit_wear_factor, season_model
 from strategy_engine.field import RivalTrend
 from strategy_engine.state import RaceState
 from strategy_engine.tyre_baselines import RIVAL_FINAL_COMPOUND, StopPatterns, rival_stop_laps
@@ -63,6 +63,42 @@ def wear_rates(season: int | None) -> dict[str, float]:
             continue
         return {c: max(0.0, float(w)) for c, w in wear.items()}
     return {c: 0.0 for c in DRY_COMPOUNDS}
+
+
+# Scale the season's wear by how hard this circuit is on tyres
+# (degradation_curves.circuit_wear_factor). A switch so the validations can
+# measure it: against the laps real 2025 cars stopped on
+# (race_plan/grid_sensitivity.py --pit-windows, 139 stops) the planner's
+# target lap was off by 7.42 laps without it and 6.68 with it, and its
+# bias fell from 1.1 laps late to 0.4. Expected-finish accuracy doesn't
+# move either way (in-race MAE 1.92 -> 1.93, pre-race 2.14 both).
+CIRCUIT_WEAR = True
+
+
+@lru_cache(maxsize=None)
+def race_wear(race_id: str) -> dict[str, float]:
+    """Wear per compound for one race: its season's rates, scaled by its
+    circuit's factor from the races before it. Run or unrun — it reads the
+    calendar."""
+    from models.common.db import get_connection
+
+    season = int(race_id.split("_")[0])
+    wear = wear_rates(season)
+    if not CIRCUIT_WEAR:
+        return wear
+    con = get_connection()
+    try:
+        row = con.execute(
+            "SELECT circuit_id, date FROM silver.calendar WHERE race_id = ? "
+            "UNION ALL SELECT circuit_id, date FROM silver.races WHERE race_id = ? LIMIT 1",
+            [race_id, race_id],
+        ).fetchone()
+    finally:
+        con.close()
+    if not row:
+        return wear
+    factor = circuit_wear_factor(row[0], str(row[1]))
+    return {c: w * factor for c, w in wear.items()}
 
 
 def tyre_cost(compound: str | None, tyre_age: float, wear: dict[str, float]) -> float:
@@ -94,10 +130,14 @@ def rival_plan_cost(rival: RivalTrend, circuit_id: str, n_laps: int, wear: dict[
     return float(np.mean(costs)) if costs else 0.0
 
 
-def tyre_adjusted_rivals(rivals: list[RivalTrend], state: RaceState, season: int | None) -> list[RivalTrend]:
+def tyre_adjusted_rivals(
+    rivals: list[RivalTrend], state: RaceState, season: int | None, wear: dict[str, float] | None = None
+) -> list[RivalTrend]:
     """Each rival's pace over the remaining race: age-neutral recent pace
-    plus the tyre cost of its assumed stops (tyre_baselines.rival_stop_laps)."""
-    wear = wear_rates(season)
+    plus the tyre cost of its assumed stops (tyre_baselines.rival_stop_laps).
+    `wear` defaults to the season's rates; callers that know the race pass
+    race_wear(race_id)."""
+    wear = wear if wear is not None else wear_rates(season)
     n_laps = state.race_total_laps - state.current_lap
     adjusted = []
     for rival in rivals:

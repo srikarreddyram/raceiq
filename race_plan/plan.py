@@ -51,10 +51,11 @@ from race_plan.field import starting_gap_for_position
 from race_plan.vsc_threshold import WaitWindow, compute_wait_window
 from strategy_engine.scoring.score import StrategyScore, score_strategy
 from strategy_engine.search.candidates import generate_candidates
-from strategy_engine.tyre_pace import field_plan_cost, plan_cost, wear_rates
+from strategy_engine.tyre_pace import field_plan_cost, plan_cost, race_wear
 from strategy_engine.simulation.monte_carlo import (
     _deterministic_tyre_plan,
     build_shared_context,
+    race_model,
     simulate_strategies,
     simulate_typical_strategy,
 )
@@ -74,22 +75,29 @@ PLANNABLE_STARTING_COMPOUNDS = DRY_COMPOUNDS
 SCREEN_SIMULATIONS = 150
 PLAN_FINALISTS = 24
 
-# What the plan's strategy is really worth, measured — the simulation
-# credits the recommended plan with more than real races bear out, because
-# its rivals never react: our car's stops are fixed while the field's are
-# drawn at random, so it collects undercuts a real pit wall would cover.
-# From race_plan/grid_sensitivity.py --strategy-edge (every classified
-# 2025 starter). Printed with every plan, and shown on the Race Weekend page.
-# Over all 419 classified 2025 starts: the typical-strategy expected finish
-# is off by 2.37 places on average (0.32 optimistic); the recommended
-# plan's own number by 2.90 (1.99 optimistic). The simulation credits the
-# plan with 1.67 places over a typical strategy; drivers who really ran its
-# stop count beat those who didn't by 0.15 +/- 0.32 places.
+# What the plan's strategy is really worth, measured. The simulation
+# credits the recommended plan with more than real races bear out. From
+# race_plan/grid_sensitivity.py --strategy-edge, all 419 classified 2025
+# starts: the typical-strategy expected finish is off by 2.37 places on
+# average (0.32 optimistic); the recommended plan's own number by 2.90
+# (1.99 optimistic). The simulation credits the plan with 1.67 places over
+# a typical strategy; drivers who really ran its stop count beat those who
+# didn't by 0.15 +/- 0.32.
+#
+# Where the credit comes from: almost all of it (1.5 places) is the plan's
+# stop laps against a field drawing real stop patterns at random — the
+# best of ~250 candidates against the average of what teams have done,
+# poor strategies included. It is NOT rivals failing to respond: letting
+# them cover nearby stops at the measured rate left the credit where it
+# was (monte_carlo.COVERS). And the plan's pit laps are about as close to
+# the laps real cars stop on as the field's own habit is (6.7 laps off
+# against 6.9, grid_sensitivity --pit-windows), so "optimised" stop laps
+# are not worth places in real races. Printed with every plan, and shown
+# on the Race Weekend page.
 STRATEGY_EDGE_EVIDENCE = (
-    "The simulation rates this plan better than a typical strategy here, but its rivals never react to our stops, "
-    "so it over-credits strategy: across 2025, drivers who ran the recommended number of stops finished only "
-    "0.15 ± 0.32 places better than those who didn't, against 1.7 places credited. Run the plan; "
-    "expect the finish above."
+    "The simulation rates this plan better than a typical strategy here, but real races don't bear the difference out: "
+    "across 2025, drivers who ran the recommended number of stops finished only 0.15 ± 0.32 places better than those "
+    "who didn't, against 1.7 places credited. Run the plan; expect the finish above."
 )
 
 
@@ -300,7 +308,7 @@ def _plan_for_starting_compound(
     # THOSE (tyre_pace.field_plan_cost) — not over the average of whatever
     # candidates happen to be generated, which moved our car's level with
     # the candidate list. No patterns (a new venue): the candidate average.
-    wear = wear_rates(int(race_id.split("_")[0]))
+    wear = race_wear(race_id)
     costs = np.array([plan_cost(_deterministic_tyre_plan(start_state, c), wear) for c in candidates])
     reference = (
         field_plan_cost(stop_patterns, start_state.race_total_laps, wear) if stop_patterns is not None else costs.mean()
@@ -310,7 +318,9 @@ def _plan_for_starting_compound(
     def score_all(strategies: list, n: int) -> list[StrategyScore]:
         # Pre-race uncertainty, not the in-race figure: nothing about any
         # car's pace today has been observed yet.
-        shared = build_shared_context(start_state, rivals, n, rng, pre_race=True, stop_patterns=stop_patterns)
+        shared = build_shared_context(
+            start_state, rivals, n, rng, pre_race=True, stop_patterns=stop_patterns, **race_model(None, race_wear(race_id))
+        )
         results = simulate_strategies(start_state, strategies, rivals, shared, [pace[c] for c in strategies])
         return [score_strategy(r) for r in results]
 
@@ -448,7 +458,10 @@ def build_race_plan(
     # the one to lean on.
     typical_state = replace(state, compound=starting_compound, current_lap=0)
     typical_rng = np.random.default_rng(seed)
-    typical_shared = build_shared_context(typical_state, rivals, n_simulations, typical_rng, pre_race=True, stop_patterns=stop_patterns)
+    typical_shared = build_shared_context(
+        typical_state, rivals, n_simulations, typical_rng, pre_race=True, stop_patterns=stop_patterns,
+        **race_model(None, race_wear(race_id)),
+    )
     typical = score_strategy(
         simulate_typical_strategy(typical_state, rivals, typical_shared, pace_anchor, stop_patterns, typical_rng)
     )

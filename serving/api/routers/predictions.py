@@ -22,9 +22,9 @@ from strategy_engine.field import build_field_snapshot_from_gold, driver_recent_
 from strategy_engine.oracles import predict_next_lap_time
 from strategy_engine.scoring.score import score_strategy
 from strategy_engine.search.candidates import Strategy
-from strategy_engine.simulation.monte_carlo import build_shared_context, simulate_strategy
+from strategy_engine.simulation.monte_carlo import build_shared_context, race_model, simulate_strategy
 from strategy_engine.state import RaceState
-from strategy_engine.tyre_pace import tyre_adjusted_rivals
+from strategy_engine.tyre_pace import race_wear, tyre_adjusted_rivals
 from serving.api.schemas import (
     LapTimePredictionRequest,
     LapTimePredictionResponse,
@@ -112,11 +112,12 @@ def simulate(request: SimulateRequest) -> SimulateResponse:
     # plan and the engine's pick are directly comparable (see
     # engine.candidate_pace_overrides and strategy_engine/tyre_pace.py).
     season = int(request.race_id.split("_")[0])
-    rivals = tyre_adjusted_rivals(rivals, state, season)
+    wear = race_wear(request.race_id)
+    rivals = tyre_adjusted_rivals(rivals, state, season, wear)
     rng = np.random.default_rng()
-    shared = build_shared_context(state, rivals, request.n_simulations, rng)
+    shared = build_shared_context(state, rivals, request.n_simulations, rng, **race_model(season, wear))
     anchor = driver_recent_pace(request.race_id, request.lap_number, request.driver_id)
-    (pace,) = candidate_pace_overrides(state, [strategy], anchor, season)
+    (pace,) = candidate_pace_overrides(state, [strategy], anchor, season, wear)
     result = simulate_strategy(state, strategy, rivals, shared, pace_deviation_override=pace)
     scored = score_strategy(result)
 

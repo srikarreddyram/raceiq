@@ -43,10 +43,20 @@ Reported:
 recommended plan over a typical strategy shows up in real results (every
 2025 round; slow — it builds a full plan per starter).
 
+`--pit-windows` checks the planner's main output — when to stop — against
+the laps real cars stopped on, next to the field's usual lap. On these
+ten rounds (139 stops where plan and driver made the same number): the
+plan's target lap is off by 6.7 laps, the field's usual lap by 6.9, and
+knowing the race's own median lap would still leave 4.3 — real cars in
+one race stop far apart. The plan is better than habit in one-stop races
+(7.8 against 9.5 laps) and worse in two-stop ones (5.0 against 3.0). Its
+stop count is the race's most common one in every dry round but Monaco,
+where 2025's two-stop rule isn't something it knows about.
+
 `--calibrate` sweeps monte_carlo.PASSING_DELTA_BASE_SECONDS.
 
 Usage:
-    uv run python -m race_plan.grid_sensitivity [--planner | --strategy-edge | --calibrate]
+    uv run python -m race_plan.grid_sensitivity [--planner | --pit-windows | --strategy-edge | --calibrate]
 """
 
 from __future__ import annotations
@@ -89,8 +99,7 @@ def simulate_race(race_id: str, n_simulations: int = N_SIMULATIONS, seed: int = 
     import strategy_engine.simulation.monte_carlo as mc
     from race_plan.field import build_pre_race_field, driver_race_pace, stop_patterns_for_race
     from race_plan.plan import _starting_state
-    from strategy_engine.pit_loss import typical_pit_loss_seconds
-    from strategy_engine.tyre_baselines import rival_stop_laps
+    from strategy_engine.tyre_pace import race_wear
 
     # Any car with laps in the race can seed the shared state (circuit,
     # distance, SC and DNF rates); it then races as one of the field.
@@ -111,33 +120,20 @@ def simulate_race(race_id: str, n_simulations: int = N_SIMULATIONS, seed: int = 
     ] + cars
     rng = np.random.default_rng(seed)
     patterns = stop_patterns_for_race(race_id)
-    shared = mc.build_shared_context(state, cars[1:], n_simulations, rng, pre_race=True)
-    n_laps, n_cars = shared.n_laps, len(cars)
-
-    if patterns is not None:
-        stops = mc.sample_rival_pit_laps(state, patterns, n_simulations, n_cars, rng)
-    else:
-        stops = np.zeros((n_simulations, n_laps, n_cars), dtype=bool)
-        for j, car in enumerate(cars):
-            stops[:, rival_stop_laps(state.circuit_id, car.compound, 0, n_laps), j] = True
-    discount = np.where(shared.sc_occurs, mc.SC_PIT_DISCOUNT, 1.0)[:, :, None]
-    pit = (stops * typical_pit_loss_seconds(state.circuit_id) * discount).astype(np.float32)
-
-    pace = np.array([c.recent_pace_delta for c in cars])[None, :] + np.c_[shared.pace_error, shared.rival_pace_error]
+    shared = mc.build_shared_context(
+        state, cars[1:], n_simulations, rng, pre_race=True, stop_patterns=patterns, **mc.race_model(None, race_wear(race_id))
+    )
     # Retirements for every car, the first car included — like for like with
-    # a comparison against classified finishers only.
+    # a comparison against classified finishers only. (The rest draw theirs
+    # in build_shared_context, at the same rate.)
     p_dnf = state.historical_dnf_rate if state.historical_dnf_rate is not None and np.isfinite(state.historical_dnf_rate) else mc.DEFAULT_DNF_RATE
-    retires = rng.random((n_simulations, n_cars)) < p_dnf
-    retire_lap = np.where(retires, rng.integers(0, n_laps, size=(n_simulations, n_cars)), n_laps)
-
-    times = mc.run_race(
-        np.array([c.gap_to_leader for c in cars]),
-        pace,
-        shared.noise,
-        pit,
-        retire_lap,
-        shared.sc_occurs,
-        mc.passing_delta_seconds(state.historical_overtaking_rate),
+    first_retires = rng.random(n_simulations) < p_dnf
+    first_retire_lap = np.where(first_retires, rng.integers(0, shared.n_laps, size=n_simulations), shared.n_laps)
+    # The first car runs as a typical car too, and every car — it included —
+    # responds to nearby stops: there is no "our car" here.
+    times = mc.race_typical_field(
+        state, cars[1:], shared, cars[0].recent_pace_delta, patterns, rng,
+        everyone_reacts=True, our_retire_lap=first_retire_lap,
     )
     finished = np.isfinite(times)
     # Position among the cars still running at the flag.
@@ -288,6 +284,107 @@ def strategy_edge(rounds: list[int] | None = None) -> pd.DataFrame:
     return df
 
 
+def _real_stops() -> pd.DataFrame:
+    """Every car's real in-laps and the compound fitted at each stop."""
+    con = get_connection()
+    try:
+        laps = con.execute(
+            f"""
+            SELECT race_id, driver_id, lap_number, stint_number, compound
+            FROM gold.lap_features WHERE race_id LIKE '{SEASON}_%' AND stint_number IS NOT NULL
+            ORDER BY race_id, driver_id, lap_number
+            """
+        ).df()
+    finally:
+        con.close()
+    laps["next_stint"] = laps.groupby(["race_id", "driver_id"]).stint_number.shift(-1)
+    laps["next_compound"] = laps.groupby(["race_id", "driver_id"]).compound.shift(-1)
+    stops = laps[laps.next_stint > laps.stint_number]
+    return stops.groupby(["race_id", "driver_id"]).agg(laps=("lap_number", list), compounds=("next_compound", list)).reset_index()
+
+
+def pit_windows() -> pd.DataFrame:
+    """Does the plan's pit window hold the lap real cars stopped on?
+
+    Every classified starter is planned from the compound they really
+    started on, so the plan and the real race begin alike. Where the plan
+    has as many stops as the driver really made, each planned stop is
+    compared with the real one: the target lap's error, and whether the
+    real lap fell inside the window. The reference is the field's own
+    habit — the median lap real cars with that many stops pitted on at
+    this circuit before (tyre_baselines.historical_stop_patterns). A plan
+    that can't beat that is adding nothing to "pit when everyone usually
+    does".
+    """
+    from race_plan.field import build_pre_race_field, driver_race_pace, stop_patterns_for_race
+    from race_plan.plan import _plan_for_starting_compound, _starting_state, _windows_from_candidates
+
+    results = _results()
+    real = _real_stops().set_index(["race_id", "driver_id"])
+    rows = []
+    for row in results[results["classified"] & (results["grid"] > 0)].itertuples():
+        key = (row.race_id, row.driver_id)
+        if key not in real.index:
+            continue
+        patterns = stop_patterns_for_race(row.race_id)
+        try:
+            state, _ = _starting_state(row.race_id, row.driver_id)
+        except ValueError as exc:
+            print(f"  skipped {row.race_id} {row.driver_id}: {exc}")
+            continue
+        outcome = _plan_for_starting_compound(
+            state,
+            state.compound,
+            build_pre_race_field(row.race_id, exclude_driver_id=row.driver_id),
+            PLANNER_SIMULATIONS,
+            7,
+            row.race_id,
+            driver_race_pace(row.race_id, row.driver_id),
+            patterns,
+        )
+        if outcome is None:
+            continue
+        plan_stops = _windows_from_candidates(*outcome)
+        total_laps = state.race_total_laps
+        real_laps = real.loc[key, "laps"]
+        base = None
+        if patterns is not None:
+            same = [f for f in patterns.fractions if len(f) == len(real_laps)]
+            if same:
+                base = [float(np.median([f[k] for f in same])) * total_laps for k in range(len(real_laps))]
+        for k, real_lap in enumerate(real_laps):
+            stop = plan_stops[k] if len(plan_stops) == len(real_laps) else None
+            rows.append(
+                {
+                    "race_id": row.race_id,
+                    "driver_id": row.driver_id,
+                    "stop": k + 1,
+                    "real_stops": len(real_laps),
+                    "plan_stops": len(plan_stops),
+                    "real_lap": real_lap,
+                    "plan_lap": stop.nominal_lap if stop else None,
+                    "window_open": stop.window_open if stop else None,
+                    "window_close": stop.window_close if stop else None,
+                    "field_lap": base[k] if base else None,
+                }
+            )
+    df = pd.DataFrame(rows)
+    matched = df[df["plan_stops"] == df["real_stops"]].copy()
+    firsts = df[df["stop"] == 1]
+    print(f"starters: {firsts.shape[0]}   plan's stop count matched the real one: {(firsts.plan_stops == firsts.real_stops).mean():.0%}")
+    print(f"stop counts   plan {firsts.plan_stops.value_counts().sort_index().to_dict()}   real {firsts.real_stops.value_counts().sort_index().to_dict()}")
+    if matched.empty:
+        return df
+    matched["plan_err"] = (matched.plan_lap - matched.real_lap).abs()
+    matched["field_err"] = (matched.field_lap - matched.real_lap).abs()
+    matched["inside"] = matched.real_lap.between(matched.window_open, matched.window_close)
+    both = matched.dropna(subset=["field_err"])
+    print(f"stops compared: {len(matched)}")
+    print(f"target-lap error   plan {both.plan_err.mean():.2f} laps   field's usual lap {both.field_err.mean():.2f} laps   (same {len(both)} stops)")
+    print(f"real stop inside the plan's window: {matched.inside.mean():.0%}   mean window {(matched.window_close - matched.window_open + 1).mean():.1f} laps")
+    return df
+
+
 CALIBRATION_GRID = [0.6, 0.9, 1.3, 1.8]
 
 
@@ -314,6 +411,9 @@ def calibrate() -> None:
 def main() -> None:
     if "--calibrate" in sys.argv:
         calibrate()
+    elif "--pit-windows" in sys.argv:
+        print(f"Pit windows against real stops — {SEASON}, rounds {SAMPLE_ROUNDS}\n")
+        pit_windows()
     elif "--strategy-edge" in sys.argv:
         print(f"Strategy edge — every classified {SEASON} starter\n")
         strategy_edge()

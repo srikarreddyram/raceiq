@@ -117,6 +117,15 @@ projection said 5.10), P6-10 8.38 vs 8.38 — but back-half starters are
 still 1-1.5 places too optimistic, and per-race rank correlation (0.70)
 is below the aggregate projection's 0.77. That residual is open.
 
+**Round 8** went after the planner's strategy credit — the simulation
+rates its recommended plan 1.7 places better than a typical strategy,
+and real races bear out a tenth of that. Three mechanisms were built and
+measured (rivals covering a nearby stop, tyres tracked lap by lap, and a
+fix to the hold rule so a car in the pit lane blocks nobody); only the
+fix earned its place. The evidence is with the switches, at
+PIT_LANE_BLOCKS. What did improve the planner's pit laps was pricing
+tyre wear per circuit (tyre_pace.race_wear).
+
 Three more simplifications, documented where they matter:
 - Rivals' future pace projects their *current* trend forward (see
   field.py) rather than simulating their own strategic decisions. Rivals are now
@@ -165,7 +174,7 @@ from strategy_engine.model_features import apply_reference_categoricals
 from strategy_engine.pit_loss import typical_pit_loss_seconds
 from strategy_engine.search.candidates import Strategy
 from strategy_engine.state import RaceState
-from strategy_engine.tyre_baselines import StopPatterns, rival_stop_laps, typical_degradation_rate
+from strategy_engine.tyre_baselines import RIVAL_FINAL_COMPOUND, StopPatterns, rival_stop_laps, typical_degradation_rate
 
 # Lap-to-lap variation in a car's lap time around its own trend, the same
 # for every car: std of clean-air green-lap residuals from a quadratic
@@ -297,6 +306,74 @@ MEDIAN_OVERTAKING_RATE = 0.17
 PASSING_DELTA_BASE_SECONDS = 1.3
 PASSING_DELTA_BOUNDS = (0.15, 4.0)
 
+# Round 8 built three things, measured each against real 2025 races, and
+# kept one. The other two stay behind switches, like SC_BUNCHES_FIELD, so
+# the results can be re-checked rather than taken on trust. Three checks:
+# in-race (strategy_engine/validate_in_race.py, dry races, expected-finish
+# MAE), pre-race (race_plan/grid_sensitivity.py, whole-grid MAE) and the
+# planner's pit laps against the laps real cars stopped on
+# (grid_sensitivity --pit-windows).
+#
+# KEPT — a car in the pit lane holds nobody up (PIT_LANE_BLOCKS = False).
+#   The hold rule used to treat a car still in the pit lane as a car on
+#   track: one that came out of the stops 0.7 s ahead of it "failed to
+#   pass" and was put back behind, so an undercut or overcut only counted
+#   if it cleared the other car by the full passing delta. Pre-race MAE
+#   2.17 -> 2.14; in-race unchanged (1.99 both, Spearman 0.867 -> 0.874).
+#
+# OFF — tyres lap by lap (TYRES_LAP_BY_LAP). Every car runs one constant
+#   pace: its plan's AVERAGE tyre cost spread over every lap. With this
+#   on, a car's pace on a lap is a tyre-neutral level plus its compound's
+#   measured wear times its tyre age, tracked inside run_race, so fresh
+#   tyres really are quicker than old ones and an undercut can exist
+#   (tests/test_tyres_lap_by_lap.py). More physical, and it validated no
+#   better anywhere: in-race MAE 1.92 -> 1.99 and P(win) Brier 0.036 ->
+#   0.042; pre-race 2.14 both; the planner's pit-lap error 6.68 -> 6.85
+#   laps, with a bias of 0.4 laps late becoming 4.2 laps early and the
+#   real stop inside the plan's window 27% -> 23% of the time; plans 50%
+#   slower. The wear rate is one field-wide number per compound. As an
+#   average its errors largely cancel between cars; applied lap by lap
+#   they move cars through each other at every pit cycle.
+#
+# OFF — covers (COVERS). When a car pits, cars around it with a stop due
+#   within COVER_WINDOW_LAPS pull it forward to the next lap. Measured on
+#   every green-flag stop in dry, red-flag-free races, 2022-2025: of cars
+#   whose next stop was due within 8 laps anyway, the share that stopped
+#   on the very next lap, beyond the 9.5% that do with nobody near them
+#   stopping —
+#       stopper 0-3 s behind (the undercut threat)   35.4% -> 28.6% pulled forward
+#       stopper 3-6 s behind                         28.5% -> 21.0%
+#       stopper 0-3 s ahead                          20.8% -> 12.5%
+#       stopper 3-6 s ahead                          18.6% -> 10.1%
+#   (2018-2021: 33.4 / 26.5 / 11.3 / 11.6% — the same across regulation
+#   eras.) Real, and it changed nothing: in-race MAE 1.96 -> 1.95 with
+#   Spearman 0.876 -> 0.862, pre-race 2.17 both, a plan's run time nearly
+#   tripled (15 s -> 33 s at 2,000 simulations), and the plan it was built
+#   to correct didn't move (Albon, Hungary 2025: P9.9 -> P9.8). The
+#   credit the simulation gives a plan over a typical strategy does not
+#   come from rivals failing to respond.
+COMPOUND_INDEX = {"SOFT": 0, "MEDIUM": 1, "HARD": 2}  # anything else (wet, unknown): index 3, no wear model
+MAX_STINTS = 8
+COVER_WINDOW_LAPS = 8
+COVER_GAP_EDGES_SECONDS = (3.0, 6.0)
+COVER_PROBABILITY_STOPPER_BEHIND = (0.286, 0.210)
+COVER_PROBABILITY_STOPPER_AHEAD = (0.125, 0.101)
+
+PIT_LANE_BLOCKS = False
+TYRES_LAP_BY_LAP = False
+COVERS = False
+
+
+def race_model(season: int | None, wear: dict | None = None) -> dict:
+    """build_shared_context keyword arguments for the race model every
+    production caller uses, as the switches above set it. `wear` is the
+    race's own (tyre_pace.race_wear); the season's otherwise."""
+    from strategy_engine.tyre_pace import wear_rates
+
+    if wear is None:
+        wear = wear_rates(season)
+    return {"wear": wear if TYRES_LAP_BY_LAP else None, "covers": COVERS}
+
 
 @dataclass
 class SimulationResult:
@@ -324,6 +401,14 @@ class SharedContext:
     # stop patterns (tyre_baselines.historical_stop_patterns). None means
     # the rule, tyre_baselines.rival_stop_laps.
     rival_pit: np.ndarray | None = None  # shape (n_simulations, n_laps, n_rivals), bool
+    # ...and the compound of each of those real cars' stints (COMPOUND_INDEX).
+    rival_compounds: np.ndarray | None = None  # shape (n_simulations, n_rivals, MAX_STINTS), int8
+    # Measured wear per compound — turns on lap-by-lap tyre pace (see
+    # TYRES_LAP_BY_LAP). None: one constant pace per car.
+    wear: dict | None = None
+    # Uniform draws deciding covers (see COVER_*), shared across candidates
+    # like every other draw. None: no covers.
+    cover_draws: np.ndarray | None = None  # shape (n_simulations, n_laps, 1 + n_rivals)
 
     @property
     def rival_retires(self) -> np.ndarray:
@@ -417,6 +502,8 @@ def build_shared_context(
     rng: np.random.Generator,
     pre_race: bool = False,
     stop_patterns: StopPatterns | None = None,
+    wear: dict | None = None,
+    covers: bool = False,
 ) -> SharedContext:
     """Computed once per race state, reused for every candidate strategy —
     the safety-car draws, lap-time noise, retirement draws and pace-estimate
@@ -430,6 +517,10 @@ def build_shared_context(
     stops of a car that really raced here — see
     tyre_baselines.historical_stop_patterns for why the rule can't be used
     for a whole field at once.
+
+    `wear` runs tyres lap by lap and `covers` lets rivals respond to a
+    nearby stop — both built in round 8 and switched off on evidence (see
+    TYRES_LAP_BY_LAP and COVERS); callers pass race_model().
     """
     n_laps = state.race_total_laps - state.current_lap
     n_rivals = len(rivals)
@@ -479,9 +570,12 @@ def build_shared_context(
     # this driver is uncertain about is equally uncertain for everyone).
     errors = sample_pace_errors(rng, (n_simulations, 1 + n_rivals), pre_race)
 
-    rival_pit = None
+    rival_pit, rival_compounds = None, None
     if stop_patterns is not None and n_rivals:
-        rival_pit = sample_rival_pit_laps(state, stop_patterns, n_simulations, n_rivals, rng)
+        rival_pit, rival_compounds = sample_rival_plans(state, stop_patterns, n_simulations, n_rivals, rng)
+
+    # Drawn last, so turning covers on leaves every draw above unchanged.
+    cover_draws = rng.random((n_simulations, n_laps, 1 + n_rivals), dtype=np.float32) if covers else None
 
     return SharedContext(
         n_laps=n_laps,
@@ -491,29 +585,52 @@ def build_shared_context(
         pace_error=errors[:, 0],
         rival_pace_error=errors[:, 1:],
         rival_pit=rival_pit,
+        rival_compounds=rival_compounds,
+        wear=wear,
+        cover_draws=cover_draws,
     )
+
+
+def _compound_index(compound: str | None) -> int:
+    return COMPOUND_INDEX.get(str(compound).upper(), len(COMPOUND_INDEX))
+
+
+def _stint_row(compounds: list[str] | tuple[str, ...]) -> np.ndarray:
+    """A car's stint compounds as MAX_STINTS indices, the last repeated."""
+    idx = [_compound_index(c) for c in compounds][:MAX_STINTS] or [len(COMPOUND_INDEX)]
+    return np.array(idx + [idx[-1]] * (MAX_STINTS - len(idx)), dtype=np.int8)
+
+
+def sample_rival_plans(
+    state: RaceState, patterns: StopPatterns, n_simulations: int, n_rivals: int, rng: np.random.Generator
+) -> tuple[np.ndarray, np.ndarray]:
+    """A real car's plan for every rival in every simulation: its stops,
+    (n_simulations, n_laps, n_rivals) bool, scaled from its race's distance
+    to this one, and its stint compounds, (n_simulations, n_rivals,
+    MAX_STINTS). A stop that would land on the last lap, or before the
+    current lap, is dropped: neither is a stop anyone makes."""
+    n_laps = state.race_total_laps - state.current_lap
+    pits = np.zeros((n_simulations, n_laps, n_rivals), dtype=bool)
+    compounds = np.zeros((n_simulations, n_rivals, MAX_STINTS), dtype=np.int8)
+    pick = rng.integers(len(patterns.fractions), size=(n_simulations, n_rivals))
+    for k, (fractions, stint_compounds) in enumerate(zip(patterns.fractions, patterns.compounds)):
+        chosen = pick == k
+        if not chosen.any():
+            continue
+        compounds[chosen] = _stint_row(stint_compounds)
+        for fraction in fractions:
+            lap = int(round(fraction * state.race_total_laps))
+            index = lap - state.current_lap - 1
+            if 0 <= index < n_laps - 1:
+                pits[:, index, :] |= chosen
+    return pits, compounds
 
 
 def sample_rival_pit_laps(
     state: RaceState, patterns: StopPatterns, n_simulations: int, n_rivals: int, rng: np.random.Generator
 ) -> np.ndarray:
-    """(n_simulations, n_laps, n_rivals) bool: a real car's stops for every
-    rival in every simulation, scaled from its race's distance to this one.
-    A stop that would land on the last lap, or before the current lap, is
-    dropped: neither is a stop anyone makes."""
-    n_laps = state.race_total_laps - state.current_lap
-    out = np.zeros((n_simulations, n_laps, n_rivals), dtype=bool)
-    pick = rng.integers(len(patterns.fractions), size=(n_simulations, n_rivals))
-    for k, fractions in enumerate(patterns.fractions):
-        chosen = pick == k
-        if not chosen.any():
-            continue
-        for fraction in fractions:
-            lap = int(round(fraction * state.race_total_laps))
-            index = lap - state.current_lap - 1
-            if 0 <= index < n_laps - 1:
-                out[:, index, :] |= chosen
-    return out
+    """The stops alone, from sample_rival_plans."""
+    return sample_rival_plans(state, patterns, n_simulations, n_rivals, rng)[0]
 
 
 def passing_delta_seconds(overtaking_rate: float | None) -> float:
@@ -525,6 +642,74 @@ def passing_delta_seconds(overtaking_rate: float | None) -> float:
     return float(np.clip(delta, *PASSING_DELTA_BOUNDS))
 
 
+@dataclass
+class Covers:
+    """What run_race needs to let cars respond to a nearby stop (COVER_*)."""
+
+    draws: np.ndarray  # (n_sims, n_laps, n_cars) uniforms
+    can_react: np.ndarray  # (n_cars,) bool — our car follows its plan
+    pit_loss_s: float
+
+
+def _cover_probability(gap: np.ndarray, table: tuple[float, ...]) -> np.ndarray:
+    near, far = COVER_GAP_EDGES_SECONDS
+    return np.where(gap < near, table[0], np.where(gap <= far, table[1], 0.0))
+
+
+def _apply_covers(
+    lap: int,
+    order: np.ndarray,
+    start: np.ndarray,
+    live: np.ndarray,
+    pit_loss: np.ndarray,
+    sc_occurs: np.ndarray,
+    covers: Covers,
+) -> None:
+    """Pull forward, to the next lap, the due stops of cars near one that
+    pits on this lap. Works in road order (`order`, `start`, `live` as
+    run_race sorts them), so each car's nearest stopper ahead and behind
+    is a running maximum/minimum — no pairwise distance matrix. Modifies
+    `pit_loss` in place."""
+    n_sims, n_laps, n_cars = pit_loss.shape
+    if lap + 1 >= n_laps:
+        return
+    rows = np.arange(n_sims)[:, None]
+    stopping = (pit_loss[:, lap, :] > 0)[rows, order] & live
+    # Measured on green-flag laps only: under a caution everyone stops for
+    # their own reasons, which the safety-car discount already covers.
+    calm = ~(sc_occurs[:, lap] | sc_occurs[:, lap + 1])
+    if not (stopping.any(axis=1) & calm).any():
+        return
+
+    pos = np.arange(n_cars)[None, :]
+    last_at_or_ahead = np.maximum.accumulate(np.where(stopping, pos, -1), axis=1)
+    ahead = np.concatenate([np.full((n_sims, 1), -1), last_at_or_ahead[:, :-1]], axis=1)
+    first_at_or_behind = np.flip(np.minimum.accumulate(np.flip(np.where(stopping, pos, n_cars), axis=1), axis=1), axis=1)
+    behind = np.concatenate([first_at_or_behind[:, 1:], np.full((n_sims, 1), n_cars)], axis=1)
+    finite_start = np.where(live, start, 0.0)
+    gap_ahead = np.where(ahead >= 0, finite_start - np.take_along_axis(finite_start, np.maximum(ahead, 0), axis=1), np.inf)
+    gap_behind = np.where(
+        behind < n_cars, np.take_along_axis(finite_start, np.minimum(behind, n_cars - 1), axis=1) - finite_start, np.inf
+    )
+    probability = np.where(
+        gap_behind <= gap_ahead,
+        _cover_probability(gap_behind, COVER_PROBABILITY_STOPPER_BEHIND),
+        _cover_probability(gap_ahead, COVER_PROBABILITY_STOPPER_AHEAD),
+    )
+
+    window = pit_loss[:, lap + 1 : lap + 1 + COVER_WINDOW_LAPS, :] > 0  # (n_sims, w, n_cars)
+    due = window.any(axis=1)[rows, order]
+    first = window.argmax(axis=1)[rows, order]  # 0 = already stopping next lap
+    eligible = live & ~stopping & due & (first > 0) & covers.can_react[order] & calm[:, None]
+    move = eligible & (covers.draws[:, lap, :][rows, order] < probability)
+    if not move.any():
+        return
+    r, p = np.nonzero(move)
+    car = order[r, p]
+    pit_loss[r, lap + 1 + first[r, p], car] = 0.0
+    pit_loss[r, lap + 1, car] = covers.pit_loss_s  # a calm lap: no caution discount
+
+
 def run_race(
     start_times: np.ndarray,
     pace_per_lap: np.ndarray,
@@ -533,28 +718,55 @@ def run_race(
     retire_lap: np.ndarray,
     sc_occurs: np.ndarray,
     passing_delta: float,
+    tyre_wear: np.ndarray | None = None,
+    start_age: np.ndarray | None = None,
+    covers: Covers | None = None,
 ) -> np.ndarray:
     """Run the remaining race lap by lap for every simulation at once, and
     return each car's final race time (np.inf for a retirement).
 
     start_times   (n_cars,)                   gap to the leader now
     pace_per_lap  (n_sims, n_cars)            seconds/lap vs the field average
+                                              (tyre-neutral level when tyre_wear is given)
     noise         (n_sims, n_laps, n_cars)    lap-to-lap variation
     pit_loss      (n_sims, n_laps, n_cars)    time lost on each car's pit laps
     retire_lap    (n_sims, n_cars)            lap index a car retires on; n_laps = never
     sc_occurs     (n_sims, n_laps)            safety car on that lap
+    tyre_wear     (n_sims, n_cars, MAX_STINTS) seconds/lap per lap of tyre age, per stint
+    start_age     (n_cars,)                   tyre age now
+    covers        Covers                      cars respond to a nearby stop
     """
     n_sims, n_laps, n_cars = noise.shape
     times = np.broadcast_to(start_times.astype(np.float64), (n_sims, n_cars)).copy()
     rows = np.arange(n_sims)[:, None]
+    if covers is not None:
+        pit_loss = pit_loss.copy()  # covers move stops; the caller's array stays as scheduled
+    if tyre_wear is not None:
+        stint = np.zeros((n_sims, n_cars), dtype=np.intp)
+        age = np.broadcast_to(
+            np.zeros(n_cars) if start_age is None else start_age.astype(np.float64), (n_sims, n_cars)
+        ).copy()
+        last_stint = tyre_wear.shape[2] - 1
 
     for lap in range(n_laps):
         active = retire_lap > lap
         # Road order at the start of the lap; retired cars sort to the back.
         order = np.argsort(np.where(active, times, np.inf), axis=1, kind="stable")
         start = times[rows, order]
-        proposed = start + (pace_per_lap + noise[:, lap, :] + pit_loss[:, lap, :])[rows, order]
         live = active[rows, order]
+        if covers is not None:
+            _apply_covers(lap, order, start, live, pit_loss, sc_occurs, covers)
+
+        lap_pace = pace_per_lap
+        if tyre_wear is not None:
+            # The same tracking as _deterministic_tyre_plan: a stop starts the
+            # next stint at age 0; otherwise the tyres age, up to the cap.
+            pitting = pit_loss[:, lap, :] > 0
+            stint = np.where(pitting, np.minimum(stint + 1, last_stint), stint)
+            age = np.where(pitting, 0.0, np.minimum(age + 1.0, MAX_TYRE_AGE_FOR_SIMULATION))
+            lap_pace = pace_per_lap + np.take_along_axis(tyre_wear, stint[:, :, None], axis=2)[:, :, 0] * age
+
+        proposed = start + (lap_pace + noise[:, lap, :] + pit_loss[:, lap, :])[rows, order]
 
         # Dirty air: following closely at the start of the lap costs time.
         close = np.zeros_like(live)
@@ -569,13 +781,16 @@ def run_race(
         # within the follow gap of the rearmost car ahead of it — without
         # being quicker by the passing delta — is held behind it. A car in
         # the pits this lap has a huge proposed time and drops back freely.
-        rear = proposed[:, 0].copy()
+        #
+        # A car in the pit lane holds nobody up (see PIT_LANE_BLOCKS).
+        on_track = live if PIT_LANE_BLOCKS else live & ~(pit_loss[:, lap, :] > 0)[rows, order]
+        rear = np.where(on_track[:, 0], proposed[:, 0], -np.inf)
         for k in range(1, n_cars):
             mine = proposed[:, k]
             held = live[:, k] & (mine >= rear - passing_delta) & (mine < rear + FOLLOW_GAP_SECONDS)
             mine = np.where(held, rear + FOLLOW_GAP_SECONDS, mine)
             proposed[:, k] = mine
-            rear = np.where(live[:, k], np.maximum(rear, mine), rear)
+            rear = np.where(on_track[:, k], np.maximum(rear, mine), rear)
 
         # A safety car bunches everyone still running behind the leader,
         # keeping the order. (Its slowing of every car equally doesn't move
@@ -589,6 +804,23 @@ def run_race(
         times[rows, order] = np.where(live, proposed, np.inf)
 
     return times
+
+
+def scheduled_tyre_cost(pit: np.ndarray, tyre_wear: np.ndarray, start_age: np.ndarray) -> np.ndarray:
+    """Mean per-lap tyre cost of each car's plan as scheduled — run_race's
+    own tracking, without the race. (n_rows, n_laps, n_cars) stops ->
+    (n_rows, n_cars)."""
+    n_rows, n_laps, n_cars = pit.shape
+    stint = np.zeros((n_rows, n_cars), dtype=np.intp)
+    age = np.broadcast_to(start_age.astype(np.float64), (n_rows, n_cars)).copy()
+    total = np.zeros((n_rows, n_cars))
+    last_stint = tyre_wear.shape[2] - 1
+    for lap in range(n_laps):
+        pitting = pit[:, lap, :] > 0
+        stint = np.where(pitting, np.minimum(stint + 1, last_stint), stint)
+        age = np.where(pitting, 0.0, np.minimum(age + 1.0, MAX_TYRE_AGE_FOR_SIMULATION))
+        total += np.take_along_axis(tyre_wear, stint[:, :, None], axis=2)[:, :, 0] * age
+    return total / max(n_laps, 1)
 
 
 def _our_pit_loss(state: RaceState, strategy: Strategy, shared: SharedContext, pit_loss_s: float) -> np.ndarray:
@@ -625,10 +857,24 @@ BATCH_ROWS = 12_000
 class _Field:
     pit_loss_s: float
     pit: np.ndarray  # (n_simulations, n_laps, n_cars); column 0 (our car) left at zero
-    pace: np.ndarray  # (n_simulations, n_cars); column 0 left at zero
+    pace: np.ndarray  # (n_simulations, n_cars); column 0 left at zero. Tyre-neutral level when wear is on
     start_times: np.ndarray  # (n_cars,)
     retire_lap: np.ndarray  # (n_simulations, n_cars)
     passing_delta: float
+    compounds: np.ndarray  # (n_simulations, n_cars, MAX_STINTS) COMPOUND_INDEX; column 0 left for our car
+    start_age: np.ndarray  # (n_cars,)
+    wear_vector: np.ndarray | None  # seconds/lap per lap of age, by COMPOUND_INDEX (+ a zero for "other")
+    # Mean per-lap tyre cost of the real plans the pre-race field runs: what
+    # a car's season form was earned on (see _field). None in-race.
+    reference_cost: float | None
+    can_react: np.ndarray  # (n_cars,) bool
+
+
+def _wear_vector(wear: dict) -> np.ndarray:
+    vector = np.zeros(len(COMPOUND_INDEX) + 1, dtype=np.float32)
+    for compound, index in COMPOUND_INDEX.items():
+        vector[index] = float(wear.get(compound, 0.0))
+    return vector
 
 
 def _field(state: RaceState, rivals: list[RivalTrend], shared: SharedContext) -> _Field:
@@ -645,19 +891,45 @@ def _field(state: RaceState, rivals: list[RivalTrend], shared: SharedContext) ->
     # plus its share of the pace-estimate uncertainty. Round 6: both sides
     # project across the full remaining race.
     field_pit = np.zeros((n_simulations, n_laps, n_cars), dtype=np.float32)
+    compounds = np.zeros((n_simulations, n_cars, MAX_STINTS), dtype=np.int8)
     if shared.rival_pit is not None:
         field_pit[:, :, 1:] = shared.rival_pit * pit_loss_s
+        if shared.rival_compounds is not None:
+            compounds[:, 1:, :] = shared.rival_compounds
+        else:  # stops given without their compounds: the rival's own, then hards
+            for j, rival in enumerate(rivals, start=1):
+                compounds[:, j, :] = _stint_row([rival.compound] + [RIVAL_FINAL_COMPOUND] * (MAX_STINTS - 1))
     else:
         for j, rival in enumerate(rivals, start=1):
-            for stop in rival_stop_laps(state.circuit_id, rival.compound, rival.tyre_age, n_laps):
+            stops = rival_stop_laps(state.circuit_id, rival.compound, rival.tyre_age, n_laps)
+            for stop in stops:
                 field_pit[:, stop, j] = pit_loss_s
+            compounds[:, j, :] = _stint_row([rival.compound] + [RIVAL_FINAL_COMPOUND] * len(stops))
     # A rival stopping under a safety car saves the same time ours does
     # (_our_pit_loss). Until this, only our car ever got the discount.
     field_pit *= np.where(shared.sc_occurs, SC_PIT_DISCOUNT, 1.0).astype(np.float32)[:, :, None]
+    start_age = np.array([state.tyre_age] + [r.tyre_age for r in rivals], dtype=float)
+    start_age = np.where(np.isfinite(start_age), start_age, 0.0)
+
     field_pace = np.zeros((n_simulations, n_cars))
     for j, rival in enumerate(rivals, start=1):
         trend = rival.recent_pace_delta if np.isfinite(rival.recent_pace_delta) else 0.0
         field_pace[:, j] = trend + shared.rival_pace_error[:, j - 1]
+
+    wear_vector, reference_cost = None, None
+    if shared.wear is not None and rivals:
+        wear_vector = _wear_vector(shared.wear)
+        rival_wear = wear_vector[compounds[:, 1:, :]]
+        if shared.rival_pit is not None:
+            # A rival's form was earned on plans like the ones drawn here, so
+            # its level is form minus their average tyre cost — and a rival
+            # that draws a three-stop runs on fresher tyres than its form.
+            reference_cost = float(scheduled_tyre_cost(field_pit[:, :, 1:], rival_wear, start_age[1:]).mean())
+            field_pace[:, 1:] -= reference_cost
+        else:
+            # In-race, each rival's pace already carries its own plan's
+            # average tyre cost (tyre_pace.tyre_adjusted_rivals).
+            field_pace[:, 1:] -= scheduled_tyre_cost(field_pit[:1, :, 1:], rival_wear[:1], start_age[1:])
 
     start_times = np.array([state.gap_to_leader] + [r.gap_to_leader for r in rivals], dtype=float)
     finite = start_times[np.isfinite(start_times)]
@@ -670,7 +942,77 @@ def _field(state: RaceState, rivals: list[RivalTrend], shared: SharedContext) ->
         start_times=start_times,
         retire_lap=retire_lap,
         passing_delta=passing_delta_seconds(state.historical_overtaking_rate),
+        compounds=compounds,
+        start_age=start_age,
+        wear_vector=wear_vector,
+        reference_cost=reference_cost,
+        can_react=np.array([False] + [True] * len(rivals)),
     )
+
+
+def _race(f: _Field, shared: SharedContext, pit: np.ndarray, pace: np.ndarray, compounds: np.ndarray, reps: int = 1) -> np.ndarray:
+    """run_race over `reps` stacked copies of the shared draws."""
+    tile = (lambda a: np.tile(a, (reps,) + (1,) * (a.ndim - 1))) if reps > 1 else (lambda a: a)
+    covers = None
+    if shared.cover_draws is not None:
+        covers = Covers(draws=tile(shared.cover_draws), can_react=f.can_react, pit_loss_s=f.pit_loss_s)
+    return run_race(
+        f.start_times,
+        pace,
+        tile(shared.noise),
+        pit,
+        tile(f.retire_lap),
+        tile(shared.sc_occurs),
+        f.passing_delta,
+        tyre_wear=None if f.wear_vector is None else f.wear_vector[compounds],
+        start_age=f.start_age,
+        covers=covers,
+    )
+
+
+def race_typical_field(
+    state: RaceState,
+    rivals: list[RivalTrend],
+    shared: SharedContext,
+    pace: float,
+    stop_patterns: StopPatterns | None,
+    rng: np.random.Generator,
+    everyone_reacts: bool = False,
+    our_retire_lap: np.ndarray | None = None,
+) -> np.ndarray:
+    """Final race times, (n_simulations, n_cars), with our car run exactly
+    like a rival: a real car's stops here, at `pace` (its season form).
+
+    `everyone_reacts` lets our car respond to nearby stops too, and
+    `our_retire_lap` lets it retire — both for race_plan/grid_sensitivity.py,
+    where there is no "our car", only a grid of equals.
+    """
+    n_simulations = shared.sc_occurs.shape[0]
+    f = _field(state, rivals, shared)
+    if stop_patterns is not None:
+        ours, our_compounds = sample_rival_plans(state, stop_patterns, n_simulations, 1, rng)
+        ours, our_compounds = ours[:, :, 0], our_compounds[:, 0, :]
+    else:
+        ours = np.zeros((n_simulations, shared.n_laps), dtype=bool)
+        stops = rival_stop_laps(state.circuit_id, state.compound, state.tyre_age, shared.n_laps)
+        ours[:, stops] = True
+        our_compounds = _stint_row([state.compound] + [RIVAL_FINAL_COMPOUND] * len(stops))
+    discount = np.where(shared.sc_occurs, SC_PIT_DISCOUNT, 1.0)
+    f.pit[:, :, 0] = ours * f.pit_loss_s * discount
+    f.compounds[:, 0, :] = our_compounds
+    f.pace[:, 0] = _clean_pace(pace) + shared.pace_error
+    if f.wear_vector is not None:
+        # Like a rival: season form earned on typical plans.
+        f.pace[:, 0] -= (
+            f.reference_cost
+            if f.reference_cost is not None
+            else scheduled_tyre_cost(f.pit[:, :, :1], f.wear_vector[f.compounds[:, :1, :]], f.start_age[:1])[:, 0]
+        )
+    if everyone_reacts:
+        f.can_react[:] = True
+    if our_retire_lap is not None:
+        f.retire_lap[:, 0] = our_retire_lap
+    return _race(f, shared, f.pit, f.pace, f.compounds)
 
 
 def simulate_typical_strategy(
@@ -688,20 +1030,10 @@ def simulate_typical_strategy(
     This is our car treated as one of the field, so it's the number
     race_plan/grid_sensitivity.py validates (the whole-grid check). A
     candidate plan's expected finish is this plus whatever the simulation
-    credits the plan with, and that credit is what real races don't bear
-    out — see race_plan/plan.py's STRATEGY_EDGE_EVIDENCE.
+    credits the plan with — see race_plan/plan.py's STRATEGY_EDGE_EVIDENCE
+    for how much of that credit real races bear out.
     """
-    n_simulations = shared.sc_occurs.shape[0]
-    f = _field(state, rivals, shared)
-    if stop_patterns is not None:
-        ours = sample_rival_pit_laps(state, stop_patterns, n_simulations, 1, rng)[:, :, 0]
-    else:
-        ours = np.zeros((n_simulations, shared.n_laps), dtype=bool)
-        ours[:, rival_stop_laps(state.circuit_id, state.compound, state.tyre_age, shared.n_laps)] = True
-    discount = np.where(shared.sc_occurs, SC_PIT_DISCOUNT, 1.0)
-    f.pit[:, :, 0] = ours * f.pit_loss_s * discount
-    f.pace[:, 0] = _clean_pace(pace) + shared.pace_error
-    final_times = run_race(f.start_times, f.pace, shared.noise, f.pit, f.retire_lap, shared.sc_occurs, f.passing_delta)
+    final_times = race_typical_field(state, rivals, shared, pace, stop_patterns, rng)
     positions = 1 + (final_times[:, 1:] < final_times[:, :1]).sum(axis=1)
     return SimulationResult(
         strategy=Strategy(pit_plan=(), label="Typical strategy here"),
@@ -723,32 +1055,40 @@ def simulate_strategies(
     run_race's per-lap loop runs once per batch instead of once per
     candidate — the loop, not the arithmetic, is what a race costs. Every
     candidate sees the same shared draws (common random numbers), tiled.
+
+    `pace_overrides` is each candidate's AVERAGE pace over its plan. With
+    tyres run lap by lap (shared.wear), it becomes a tyre-neutral level —
+    the override minus the plan's own average tyre cost — so the average
+    is unchanged and the plan's fresh and worn laps fall where its stops
+    put them.
     """
     n_simulations = shared.sc_occurs.shape[0]
     f = _field(state, rivals, shared)
-    pit_loss_s, field_pit, field_pace = f.pit_loss_s, f.pit, f.pace
-    start_times, retire_lap, delta = f.start_times, f.retire_lap, f.passing_delta
 
     results: list[SimulationResult] = []
     chunk = max(1, BATCH_ROWS // max(n_simulations, 1))
     for start in range(0, len(strategies), chunk):
         batch = strategies[start : start + chunk]
         b = len(batch)
-        pit = np.tile(field_pit, (b, 1, 1))
-        pace = np.tile(field_pace, (b, 1))
+        pit = np.tile(f.pit, (b, 1, 1))
+        pace = np.tile(f.pace, (b, 1))
+        compounds = np.tile(f.compounds, (b, 1, 1))
+        own_pit = np.zeros((b, shared.n_laps, 1), dtype=np.float32)
+        own_compounds = np.zeros((b, 1, MAX_STINTS), dtype=np.int8)
+        for i, strategy in enumerate(batch):
+            own_pit[i, :, 0] = _deterministic_pit_plan(state, strategy)
+            own_compounds[i, 0] = _stint_row([state.compound] + [c for _, c in strategy.pit_plan])
+        own_cost = (
+            scheduled_tyre_cost(own_pit, f.wear_vector[own_compounds], f.start_age[:1])[:, 0]
+            if f.wear_vector is not None
+            else np.zeros(b)
+        )
         for i, (strategy, override) in enumerate(zip(batch, pace_overrides[start : start + chunk])):
             rows = slice(i * n_simulations, (i + 1) * n_simulations)
-            pit[rows, :, 0] = _our_pit_loss(state, strategy, shared, pit_loss_s)
-            pace[rows, 0] = _clean_pace(override) + shared.pace_error
-        final_times = run_race(
-            start_times,
-            pace,
-            np.tile(shared.noise, (b, 1, 1)),
-            pit,
-            np.tile(retire_lap, (b, 1)),
-            np.tile(shared.sc_occurs, (b, 1)),
-            delta,
-        )
+            pit[rows, :, 0] = _our_pit_loss(state, strategy, shared, f.pit_loss_s)
+            pace[rows, 0] = _clean_pace(override) - own_cost[i] + shared.pace_error
+            compounds[rows, 0, :] = own_compounds[i, 0]
+        final_times = _race(f, shared, pit, pace, compounds, reps=b)
         positions = 1 + (final_times[:, 1:] < final_times[:, :1]).sum(axis=1)
         for i, strategy in enumerate(batch):
             results.append(
