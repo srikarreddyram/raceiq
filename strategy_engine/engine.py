@@ -12,12 +12,13 @@ import time
 
 import numpy as np
 
-from strategy_engine.field import build_field_snapshot_from_gold, driver_recent_pace
+from strategy_engine import field
+from strategy_engine.field import RivalTrend, build_field_snapshot_from_gold, driver_recent_pace
 from strategy_engine.scoring.score import score_strategy
 from strategy_engine.search.candidates import generate_candidates
 from strategy_engine.simulation.monte_carlo import _deterministic_tyre_plan, build_shared_context, race_model, simulate_strategies
 from strategy_engine.state import RaceState
-from strategy_engine.tyre_pace import age_neutral, plan_cost, race_wear, tyre_adjusted_rivals, wear_rates
+from strategy_engine.tyre_pace import age_neutral, plan_cost, race_wear, rival_plan_cost, tyre_adjusted_rivals, wear_rates
 
 
 def candidate_pace_overrides(
@@ -27,11 +28,11 @@ def candidate_pace_overrides(
     season: int | None = None,
     wear: dict | None = None,
 ) -> list[float]:
-    """Our car's per-lap pace for each strategy: our recent pace — measured
-    exactly as every rival's is (field.driver_recent_pace) — made
-    tyre-age-neutral, plus that strategy's measured tyre cost over the
-    remaining laps. Rivals get the same treatment in
-    tyre_pace.tyre_adjusted_rivals, so both sides come from one estimator.
+    """Our car's per-lap pace for each strategy: our expected rest-of-race
+    pace — measured exactly as every rival's is (field.driver_recent_pace)
+    — adjusted for that strategy's measured tyre cost over the remaining
+    laps. Rivals get the same treatment in tyre_pace.tyre_adjusted_rivals,
+    so both sides come from one estimator.
     See strategy_engine/tyre_pace.py for why this replaced the LSTM's
     per-strategy pace.
     """
@@ -42,6 +43,14 @@ def candidate_pace_overrides(
         if not np.isfinite(pace_anchor):
             pace_anchor = 0.0
     wear = wear if wear is not None else wear_rates(season)
+    if field.REST_OF_RACE_PACE:
+        # The anchor is this car's expected rest-of-race pace on the stops
+        # a car in its position typically makes — the same assumption every
+        # rival's pace carries. A strategy is charged what its tyres cost
+        # over and above that typical plan.
+        as_rival = RivalTrend(state.driver_id, state.team_id, state.gap_to_leader, pace_anchor, state.compound, state.tyre_age)
+        typical = rival_plan_cost(as_rival, state.circuit_id, state.race_total_laps - state.current_lap, wear)
+        return [pace_anchor + plan_cost(_deterministic_tyre_plan(state, s), wear) - typical for s in strategies]
     level = age_neutral(pace_anchor, state.compound, state.tyre_age, wear)
     return [level + plan_cost(_deterministic_tyre_plan(state, s), wear) for s in strategies]
 

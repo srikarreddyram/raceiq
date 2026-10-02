@@ -155,3 +155,22 @@ def test_batched_candidates_match_one_at_a_time(leader_state, leader_rivals):
     for strategy, pace, result in zip(candidates, paces, batched):
         single = mc.simulate_strategy(leader_state, strategy, leader_rivals, shared, pace_deviation_override=pace)
         assert np.array_equal(single.final_positions, result.final_positions)
+
+
+def test_rest_of_race_pace_weighs_the_race_more_as_it_goes_on():
+    from strategy_engine.field import _blend_weights
+
+    early, late = _blend_weights(0.25), _blend_weights(0.70)
+    assert early == pytest.approx((0.445, 0.50)) and late == pytest.approx((0.634, 0.32))
+    assert late[0] > early[0] and late[1] < early[1]
+    assert _blend_weights(0.0) == _blend_weights(0.1) and _blend_weights(1.0) == _blend_weights(0.9)
+
+
+def test_our_car_and_the_field_share_one_pace_estimate():
+    # Bahrain 2025, lap 20 (conftest's verified scenario).
+    from strategy_engine.field import build_field_snapshot_from_gold, driver_recent_pace, rest_of_race_pace
+
+    pace = rest_of_race_pace("2025_4", 20)
+    assert pace["piastri"] < pace["bortoleto"]  # the leader is quicker than the last car
+    as_rival = {r.driver_id: r.recent_pace_delta for r in build_field_snapshot_from_gold("2025_4", 20, "bortoleto")}
+    assert driver_recent_pace("2025_4", 20, "piastri") == pytest.approx(as_rival["piastri"])

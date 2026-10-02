@@ -133,10 +133,22 @@ def rival_plan_cost(rival: RivalTrend, circuit_id: str, n_laps: int, wear: dict[
 def tyre_adjusted_rivals(
     rivals: list[RivalTrend], state: RaceState, season: int | None, wear: dict[str, float] | None = None
 ) -> list[RivalTrend]:
-    """Each rival's pace over the remaining race: age-neutral recent pace
-    plus the tyre cost of its assumed stops (tyre_baselines.rival_stop_laps).
-    `wear` defaults to the season's rates; callers that know the race pass
-    race_wear(race_id)."""
+    """Each rival's pace over the remaining race.
+
+    With field.REST_OF_RACE_PACE (the default) a rival's pace already IS
+    its expected rest-of-race pace, on the stops a car in its position
+    typically makes, and is passed through. Without it, the pace is the
+    last five laps' — taken on tyres of a particular age — so the tyre
+    cost at that age comes out and the cost of its assumed stops
+    (tyre_baselines.rival_stop_laps) goes in. `wear` defaults to the
+    season's rates; callers that know the race pass race_wear(race_id)."""
+    from strategy_engine import field
+
+    if field.REST_OF_RACE_PACE:
+        return [
+            replace(rival, recent_pace_delta=rival.recent_pace_delta if np.isfinite(rival.recent_pace_delta) else 0.0)
+            for rival in rivals
+        ]
     wear = wear if wear is not None else wear_rates(season)
     n_laps = state.race_total_laps - state.current_lap
     adjusted = []

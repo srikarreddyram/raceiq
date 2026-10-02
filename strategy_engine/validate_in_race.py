@@ -25,18 +25,23 @@ the normal run is what guessing rivals' strategy costs.
 Races with rain or a red flag are reported separately, found from the lap
 data: both rewrite everyone's strategy in ways no snapshot predicts.
 
-Where it stands (expected-finish MAE in places; "clean" leaves out races
-with rain or a red flag):
+Where it stands (expected-finish MAE in places / per-race rank
+correlation; "clean" leaves out races with rain or a red flag):
 
-                         simulation   stay put   oracle rivals
-    2025, 10 rounds         1.84        2.27         1.71
-    2025, clean (8)         1.79        2.27         1.67
-    2026, 15 rounds         2.39        1.88         2.10
-    2026, clean (12)        1.97        1.87         1.80
+                         simulation      stay put      oracle rivals
+    2025, 10 rounds      1.83 / 0.88    2.27 / 0.84
+    2025, clean (8)      1.71 / 0.93    2.27 / 0.84    1.49 / 0.92
+    2026, 15 rounds      2.22 / 0.86    1.88 / 0.89
+    2026, clean (12)     1.78 / 0.93    1.87 / 0.89    1.52 / 0.92
 
-On 2026 — new regulations, and cars that hold position far more after
-40% distance than in 2025 — the simulation does not beat "finish where
-you are now". Knowing rivals' stops would put it just ahead.
+Two things got it here. Phantom stops in the timing data
+(pipelines/silver/laps.py) had the 2025 figure at 2.31. And the pace each
+car is projected at was its last five laps; it is now its green-flag pace
+over the race so far blended with the pre-race estimate
+(field.REST_OF_RACE_PACE), which took clean 2026 races from 1.97 —
+behind "finish where you are now" — to 1.78. Races with a red flag
+remain far out (3.7-4.5 places against 1.4-3.0 for staying put): the
+stoppage hands everyone a free tyre change no snapshot can see coming.
 
 Usage:
     uv run python -m strategy_engine.validate_in_race [--delta 0.6] [--bunch] [--oracle-rivals]
@@ -104,12 +109,13 @@ def disrupted_races(season: int) -> set[str]:
     return {r[0] for r in rows}
 
 
-def _oracle_rivals(field: list, race_rows: pd.DataFrame, lap: int, total: int, wear: dict, n_simulations: int):
+def _oracle_rivals(field: list, race_rows: pd.DataFrame, lap: int, total: int, wear: dict, n_simulations: int, circuit_id: str):
     """Each rival on the stops it really made: its pace over the remaining
     race (age-neutral recent pace plus its real plan's tyre cost) and its
     pit laps, in the shape SharedContext.rival_pit takes."""
     import strategy_engine.simulation.monte_carlo as mc
-    from strategy_engine.tyre_pace import age_neutral, tyre_cost
+    from strategy_engine import field as field_module
+    from strategy_engine.tyre_pace import age_neutral, rival_plan_cost, tyre_cost
 
     n_laps = total - lap
     pit = np.zeros((n_simulations, n_laps, len(field)), dtype=bool)
@@ -126,7 +132,12 @@ def _oracle_rivals(field: list, race_rows: pd.DataFrame, lap: int, total: int, w
                 age += 1
             costs.append(tyre_cost(compound, age, wear))
         recent = rival.recent_pace_delta if np.isfinite(rival.recent_pace_delta) else 0.0
-        pace = age_neutral(recent, rival.compound, rival.tyre_age, wear) + (float(np.mean(costs)) if costs else 0.0)
+        real_cost = float(np.mean(costs)) if costs else 0.0
+        if field_module.REST_OF_RACE_PACE:
+            # Its expected pace assumes a typical plan; charge the real one's difference.
+            pace = recent + real_cost - rival_plan_cost(rival, circuit_id, n_laps, wear)
+        else:
+            pace = age_neutral(recent, rival.compound, rival.tyre_age, wear) + real_cost
         rivals.append(replace(rival, recent_pace_delta=pace))
         compounds[:, j, :] = mc._stint_row([rival.compound] + [plan[k] for k in sorted(plan)])
     return rivals, pit, compounds
@@ -174,7 +185,7 @@ def run(delta: float | None = None, bunch: bool = False, oracle_rivals: bool = F
                 field = build_field_snapshot_from_gold(race_id, lap, snap.driver_id)
                 strategy = Strategy(pit_plan=_actual_plan(race_rows, snap.driver_id, lap), label="actual")
                 if oracle_rivals:
-                    rivals, rival_pit, rival_compounds = _oracle_rivals(field, race_rows, lap, total, wear, N_SIMULATIONS)
+                    rivals, rival_pit, rival_compounds = _oracle_rivals(field, race_rows, lap, total, wear, N_SIMULATIONS, state.circuit_id)
                 else:
                     rivals = tyre_adjusted_rivals(field, state, season, wear)
                 shared = mc.build_shared_context(state, rivals, N_SIMULATIONS, np.random.default_rng(3), **mc.race_model(season, wear))
