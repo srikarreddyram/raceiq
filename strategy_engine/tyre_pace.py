@@ -75,6 +75,32 @@ def wear_rates(season: int | None) -> dict[str, float]:
 CIRCUIT_WEAR = True
 
 
+# A multiplier on every wear rate, left at 1.0 on evidence.
+#
+# The planner recommends about 1.2 stops per car; real teams make 1.5-1.65
+# (and the same circuits' history says 1.75). Wear measured from lap times
+# plausibly understates degradation — drivers manage their tyres, and only
+# stints that survive get long — so this scales it, to see whether teams'
+# real stop counts can be reproduced. They can't
+# (race_plan/grid_sensitivity.py --pit-windows, ten clean 2025 rounds;
+# "match" is the share of cars whose real stop count the plan picked):
+#
+#                         stops/car   match   pit-lap error   bias
+#   x1.0                    1.19       60%      8.6 laps      +2.0
+#   x1.5                    1.19       61%      8.1           +1.4
+#   x2.0                    1.20       61%      7.9           +0.6
+#   x2.0, tyres lap by lap  1.25       64%      7.9           -3.8
+#   x3.0, tyres lap by lap  1.62       47%      6.4           -2.6
+#   real                    1.46
+#
+# The count doesn't move until wear is tripled with tyres run lap by lap,
+# and then it moves at the wrong races (the race's usual count right in
+# 30% of races, from 70%). x2.0 does bring pit laps closer on 2025, but on
+# twelve clean 2026 rounds the gain is 7.8 -> 7.7 laps with the match at
+# 51% from 49% — noise. For reference, "the stop count most common at
+# this circuit before" matches 47% of cars on 2025 and 66% on 2026, so
+# history is no better a guide. Stop count is right for 50-60% of cars
+# either way, and nothing tried here improves on that.
 WEAR_SCALE = 1.0
 
 
