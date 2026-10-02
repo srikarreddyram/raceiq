@@ -77,27 +77,26 @@ PLAN_FINALISTS = 24
 
 # What the plan's strategy is really worth, measured. The simulation
 # credits the recommended plan with more than real races bear out. From
-# race_plan/grid_sensitivity.py --strategy-edge, all 419 classified 2025
-# starts: the typical-strategy expected finish is off by 2.37 places on
-# average (0.32 optimistic); the recommended plan's own number by 2.90
-# (1.99 optimistic). The simulation credits the plan with 1.67 places over
-# a typical strategy; drivers who really ran its stop count beat those who
-# didn't by 0.15 +/- 0.32.
+# race_plan/grid_sensitivity.py --strategy-edge, the 374 classified starts
+# in 2025's 21 races without rain or a red flag: the typical-strategy
+# expected finish is off by 2.33 places on average (0.33 optimistic); the
+# recommended plan's own number by 2.87 (1.96 optimistic). The simulation
+# credits the plan with 1.63 places over a typical strategy; drivers who
+# really ran its stop count beat those who didn't by 0.03 +/- 0.33.
 #
-# Where the credit comes from: almost all of it (1.5 places) is the plan's
-# stop laps against a field drawing real stop patterns at random — the
-# best of ~250 candidates against the average of what teams have done,
-# poor strategies included. It is NOT rivals failing to respond: letting
-# them cover nearby stops at the measured rate left the credit where it
-# was (monte_carlo.COVERS). And the plan's pit laps are about as close to
-# the laps real cars stop on as the field's own habit is (6.7 laps off
-# against 6.9, grid_sensitivity --pit-windows), so "optimised" stop laps
-# are not worth places in real races. Printed with every plan, and shown
-# on the Race Weekend page.
+# Where the credit comes from: almost all of it is the plan's stop laps
+# against a field drawing real stop patterns at random — the best of ~250
+# candidates against the average of what teams have done, poor strategies
+# included. It is NOT rivals failing to respond: letting them cover nearby
+# stops at the measured rate left the credit where it was
+# (monte_carlo.COVERS). And the plan's pit laps are about as close to the
+# laps real cars stop on as the field's own habit is (grid_sensitivity
+# --pit-windows), so "optimised" stop laps are not worth places in real
+# races. Printed with every plan, and shown on the Race Weekend page.
 STRATEGY_EDGE_EVIDENCE = (
     "The simulation rates this plan better than a typical strategy here, but real races don't bear the difference out: "
-    "across 2025, drivers who ran the recommended number of stops finished only 0.15 ± 0.32 places better than those "
-    "who didn't, against 1.7 places credited. Run the plan; expect the finish above."
+    "across 2025, drivers who ran the recommended number of stops finished no better than those who didn't "
+    "(0.03 ± 0.33 places), against 1.6 places credited. Run the plan; expect the finish above."
 )
 
 
