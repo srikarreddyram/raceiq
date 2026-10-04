@@ -423,3 +423,50 @@ export type SpeedProfile = { season: number; races: number; teams: TeamSpeed[] }
 
 /** GET /calendar — every round of a season, run or not. */
 export type CalendarRound = Race & { circuit_name: string; country: string; has_results: boolean };
+
+export type LongRunDriver = {
+  driver_id: string;
+  code: string;
+  team_id: string;
+  mean_lap: number;
+  gap: number;
+  sd: number | null;
+  push_laps: number;
+  compounds: string[];
+  deg_soft: number | null;
+  deg_medium: number | null;
+  deg_hard: number | null;
+};
+export type LongRunTeam = {
+  team_id: string;
+  team_name: string;
+  drivers: string[];
+  mean_lap: number;
+  gap: number;
+  push_laps: number;
+  deg_soft: number | null;
+  deg_medium: number | null;
+  deg_hard: number | null;
+};
+export type LongRunLap = {
+  code: string;
+  driver_id: string;
+  team_id: string;
+  session: string;
+  run: number;
+  compound: string | null;
+  tyre_age: number | null;
+  lap_time: number;
+};
+export type LongRuns = {
+  race_id: string;
+  sessions_available: string[];
+  default_session: string | null;
+  session: string | null;
+  drivers: LongRunDriver[];
+  teams: LongRunTeam[];
+  laps: LongRunLap[];
+  wear: { compound: string; practice: number | null; history: number; used: number }[];
+  practice_in_plan: boolean;
+  evidence: string;
+};

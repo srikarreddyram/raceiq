@@ -20,6 +20,7 @@ import { useAsync } from "../../api/useAsync";
 import { Card, ErrorState, SectionLabel, Stat } from "../../design/primitives";
 import { accentVars, teamAccent } from "../../design/theme";
 import { C, DISPLAY, F, NUM, compoundColor } from "../../design/tokens";
+import { LongRunsSection } from "../components/LongRuns";
 import { RaceSelector, controlStyle, labelStyle, useRaceSelection } from "../components/RaceSelector";
 
 const pct = (v: number) => `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`;
@@ -506,6 +507,7 @@ export function PlannerView() {
             <StartingOptions plan={p} />
           </div>
           <TyreSets plan={p} />
+          <LongRunsSection raceId={selection.raceId} driverId={selection.driverId} />
 
           <div style={{ fontFamily: F.body, fontSize: 12, color: C.faint, lineHeight: 1.6 }}>
             {p.n_simulations.toLocaleString()} simulated races per finalist strategy, lap by lap with traffic and track position. Every car's

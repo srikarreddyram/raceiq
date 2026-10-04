@@ -104,11 +104,58 @@ CIRCUIT_WEAR = True
 WEAR_SCALE = 1.0
 
 
+# This weekend's practice long runs, blended in where there are any
+# (race_plan/long_runs.py). How hard a race is on tyres, field-wide, per
+# compound, against what each estimate said beforehand — 60
+# weekend-compounds of 2025-26 with practice, races without rain or a red
+# flag, each weekend predicted from a fit on the others:
+#
+#                                         error (s/lap per lap)   corr
+#     history: season rate x circuit            0.0310            0.37
+#     practice long runs alone                  0.0272            0.68
+#     0.32 x practice + 0.54 x history          0.0253
+#
+# Practice reads high (drivers aren't managing tyres over a race distance,
+# and the runs are short), hence the weight well under 1. It matters most
+# on softs (correlation 0.76 against 0.25 for history) and at a circuit
+# with no history at all. A team's own practice degradation against the
+# field's says nothing about its race (correlation 0.02), so this is the
+# field's figure, the same for every car.
+#
+# What it does to the planner (race_plan/grid_sensitivity.py --pit-windows,
+# every clean weekend with practice): pit-lap error 8.11 -> 7.61 laps on
+# 12 rounds of 2026, the real stop inside the plan's window 20% -> 32%;
+# on 13 rounds of 2025, 7.85 -> 7.82 laps, inside the window 28% -> 21%.
+# The stop count it picks doesn't change (1.2 per car against 1.6 real),
+# and in-race accuracy doesn't move (1.97 -> 1.95 places on 2025, 1.77
+# both on 2026). The evidence behind the blend:
+# race_plan/long_runs_validation.py.
+PRACTICE_WEAR = True
+PRACTICE_WEIGHT = 0.317
+HISTORY_WEIGHT = 0.540
+
+
 @lru_cache(maxsize=None)
 def race_wear(race_id: str) -> dict[str, float]:
-    """Wear per compound for one race: its season's rates, scaled by its
-    circuit's factor from the races before it. Run or unrun — it reads the
-    calendar."""
+    """Wear per compound for one race: history (history_wear), blended with
+    this weekend's practice long runs where they exist (PRACTICE_WEAR)."""
+    wear = history_wear(race_id)
+    if not PRACTICE_WEAR:
+        return wear
+    from race_plan.long_runs import field_degradation  # race_plan imports this module
+
+    practice = field_degradation(race_id)
+    return {
+        c: max(0.0, PRACTICE_WEIGHT * practice[c] + HISTORY_WEIGHT * w) if practice.get(c) is not None else w
+        for c, w in wear.items()
+    }
+
+
+@lru_cache(maxsize=None)
+def history_wear(race_id: str) -> dict[str, float]:
+    """Wear per compound from history: the season's rates, scaled by the
+    circuit's factor from the races before this one. Run or unrun — it
+    reads the calendar."""
     from models.common.db import get_connection
 
     season = int(race_id.split("_")[0])

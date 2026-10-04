@@ -20,7 +20,7 @@ from race_plan.plan import STRATEGY_EDGE_EVIDENCE, build_race_plan
 from race_plan.tyre_allocation import recommend_tyre_allocation
 from race_plan.weekend_pace import qualifying_gaps
 from serving.api.db import get_db
-from serving.api.schemas import CalendarRound, RacePlanResponse, Standings, StandingEntry
+from serving.api.schemas import CalendarRound, LongRuns, RacePlanResponse, Standings, StandingEntry
 from strategy_engine.pit_loss import typical_pit_loss_seconds
 
 router = APIRouter(tags=["planner"])
@@ -221,3 +221,68 @@ def get_calendar(
         [season],
     ).df()
     return [CalendarRound(**r) for r in rows.to_dict(orient="records")]
+
+
+LONG_RUN_EVIDENCE = (
+    "What feeds the plan: the whole field's tyre degradation per compound, blended with the circuit's history. "
+    "Across 2025-26 that predicts how hard a race is on its tyres better than history alone (correlation with the "
+    "race 0.68 against 0.37). Long-run pace and each team's own degradation don't feed it: once season form and "
+    "qualifying are known, pace adds nothing measurable, and a team's practice degradation against the field's says "
+    "nothing about its race (correlation 0.02)."
+)
+
+
+@router.get("/races/{race_id}/long-runs", response_model=LongRuns)
+def get_long_runs(
+    race_id: str,
+    session: str | None = Query(None, pattern="^FP[123]$", description="One practice session; omit for all of them"),
+) -> LongRuns:
+    """Practice long runs: push-lap pace, spread and degradation per driver
+    and per team, the push laps themselves, and what the plan takes from
+    them (race_plan/long_runs.py)."""
+    import strategy_engine.tyre_pace as tyre_pace
+    from race_plan.long_runs import DRY_COMPOUNDS, field_degradation, practice_laps, summary, team_names, team_summary
+
+    laps = practice_laps(race_id)
+    if laps.empty:
+        raise HTTPException(404, detail=f"No practice laps ingested for {race_id}")
+    available = sorted(laps["session"].unique().tolist())
+    names = team_names(int(race_id.split("_")[0]))
+    push_counts = laps[laps["push"]].groupby("session").size()
+    default_session = str(push_counts.idxmax()) if len(push_counts) else None
+
+    def clean(v):
+        return None if v is None or v != v else float(v)
+
+    drivers = summary(race_id, session)
+    teams = team_summary(race_id, session)
+    chosen = laps if session is None else laps[laps["session"] == session]
+    push = chosen[chosen["push"]]
+    practice = field_degradation(race_id)
+    history = tyre_pace.history_wear(race_id)
+    used = tyre_pace.race_wear(race_id)
+    return LongRuns(
+        race_id=race_id,
+        sessions_available=available,
+        default_session=default_session,
+        session=session,
+        drivers=[
+            {**{k: r[k] for k in ("driver_id", "code", "team_id", "mean_lap", "gap", "push_laps", "compounds")},
+             "sd": clean(r["sd"]), "deg_soft": clean(r["deg_soft"]), "deg_medium": clean(r["deg_medium"]), "deg_hard": clean(r["deg_hard"])}
+            for _, r in drivers.iterrows()
+        ],
+        teams=[
+            {**{k: r[k] for k in ("team_id", "drivers", "mean_lap", "gap", "push_laps")},
+             "team_name": names.get(r["team_id"], str(r["team_id"]).replace("_", " ").title()),
+             "deg_soft": clean(r["deg_soft"]), "deg_medium": clean(r["deg_medium"]), "deg_hard": clean(r["deg_hard"])}
+            for _, r in teams.iterrows()
+        ],
+        laps=[
+            {"code": r.code, "driver_id": r.driver_id, "team_id": r.team_id, "session": r.session, "run": int(r.run),
+             "compound": r.compound if isinstance(r.compound, str) else None, "tyre_age": clean(r.tyre_age), "lap_time": float(r.lap_time)}
+            for r in push.itertuples()
+        ],
+        wear=[{"compound": c, "practice": clean(practice.get(c)), "history": float(history[c]), "used": float(used[c])} for c in DRY_COMPOUNDS],
+        practice_in_plan=bool(tyre_pace.PRACTICE_WEAR and any(v is not None for v in practice.values())),
+        evidence=LONG_RUN_EVIDENCE,
+    )

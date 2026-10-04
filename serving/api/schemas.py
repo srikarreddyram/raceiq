@@ -584,3 +584,64 @@ class CalendarRound(BaseModel):
     country: str
     date: date_type
     has_results: bool
+
+
+class LongRunDriver(BaseModel):
+    driver_id: str
+    code: str
+    team_id: str
+    mean_lap: float
+    gap: float
+    sd: float | None
+    push_laps: int
+    compounds: list[str]
+    deg_soft: float | None
+    deg_medium: float | None
+    deg_hard: float | None
+
+
+class LongRunTeam(BaseModel):
+    team_id: str
+    team_name: str
+    drivers: list[str]
+    mean_lap: float
+    gap: float
+    push_laps: int
+    deg_soft: float | None
+    deg_medium: float | None
+    deg_hard: float | None
+
+
+class LongRunLap(BaseModel):
+    code: str
+    driver_id: str
+    team_id: str
+    session: str
+    run: int
+    compound: str | None
+    tyre_age: float | None
+    lap_time: float
+
+
+class LongRunWear(BaseModel):
+    compound: str
+    practice: float | None  # the field's practice degradation, fuel effect removed
+    history: float  # season rate x circuit factor
+    used: float  # what the plan prices tyres with
+
+
+class LongRuns(BaseModel):
+    """Practice long runs for one race weekend — race_plan/long_runs.py."""
+
+    race_id: str
+    sessions_available: list[str]
+    # The session with the most long-run laps — normally FP2, the one teams
+    # run their race simulations in; FP1 on a sprint weekend.
+    default_session: str | None
+    session: str | None  # None: every practice session together
+    drivers: list[LongRunDriver]
+    teams: list[LongRunTeam]
+    laps: list[LongRunLap]
+    wear: list[LongRunWear]
+    practice_in_plan: bool
+    evidence: str

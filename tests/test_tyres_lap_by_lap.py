@@ -118,6 +118,6 @@ def test_bahrain_is_harder_on_tyres_than_jeddah():
 
 def test_race_wear_scales_the_seasons_rates_by_the_circuit():
     season = tyre_pace.wear_rates(2025)
-    race = tyre_pace.race_wear("2025_4")  # Bahrain
+    race = tyre_pace.history_wear("2025_4")  # Bahrain; race_wear also blends in practice (tests/test_long_runs.py)
     ratios = {c: race[c] / season[c] for c in season if season[c] > 0}
     assert len(set(round(r, 6) for r in ratios.values())) == 1  # one factor for every compound

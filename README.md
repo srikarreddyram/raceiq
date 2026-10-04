@@ -21,7 +21,7 @@ The web app (the "Pit Wall") has six pages:
 
 | Page | What it answers |
 |---|---|
-| **Race Weekend** | The plan for one driver at one race: starting tyre, pit windows, the "wait for a safety car or pit now" call for each stop, tyre sets to save, and the expected finish. Defaults to the next race on the calendar. |
+| **Race Weekend** | The plan for one driver at one race: starting tyre, pit windows, the "wait for a safety car or pit now" call for each stop, tyre sets to save, and the expected finish. Plus the weekend's practice long runs: push-lap pace, spread and tyre degradation per driver and team. Defaults to the next race on the calendar. |
 | **Race Strategy** | Mid-race: from any lap of a race already run, what should this driver do now, and what happens if they try something else. |
 | **Circuit** | Track map, corners, and what each circuit does to tyres, safety cars and overtaking. |
 | **Car** | Where each car is fast (straight-line speed against race pace) and how hard it is on its tyres, with a written reading of why. |
