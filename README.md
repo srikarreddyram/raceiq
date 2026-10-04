@@ -234,3 +234,8 @@ docs/              product requirements and UI design notes
 
 RaceIQ is an independent project. It isn't affiliated with or endorsed by
 Formula 1, the FIA or any team.
+
+## License
+
+[MIT](LICENSE). The data sources above have their own terms; this license
+covers RaceIQ's code, not their data.
