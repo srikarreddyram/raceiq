@@ -485,6 +485,29 @@ class RaceConditions(BaseModel):
     rain_probability: float | None
 
 
+class WetCall(BaseModel):
+    title: str
+    text: str
+
+
+class RainHour(BaseModel):
+    hour_utc: str
+    rain_probability: float | None
+    rain_mm: float | None
+
+
+class WetPlanOut(BaseModel):
+    """What to do if the track is wet — race_plan/wet.py."""
+
+    chance_at_start: float | None
+    chance_during: float | None
+    hourly: list[RainHour]
+    leads: bool  # rain likely enough that this leads the page and the dry plan is "if it stays dry"
+    start_tyre: str
+    calls: list[WetCall]
+    source: str  # "forecast", "typical", "measured" or "override"
+
+
 class RacePlanResponse(BaseModel):
     """The race weekend planner — race_plan/. Everything a strategist needs
     for one driver at one race: conditions, tyre sets, starting compound,
@@ -528,6 +551,7 @@ class RacePlanResponse(BaseModel):
     qualifying_in_pace: bool  # whether this weekend's qualifying sharpens every car's pace
     starting_options: list[StartingOption]
     tyres: TyrePlanOut
+    wet_plan: WetPlanOut | None
 
 
 class StandingEntry(BaseModel):

@@ -142,6 +142,17 @@ def get_race_plan(
         rival_stops_source=plan.rival_stops_source,
         qualifying_in_pace=bool(qualifying_gaps(race_id)),
         starting_options=plan.considered,
+        wet_plan=None
+        if plan.wet is None
+        else {
+            "chance_at_start": finite(plan.wet.chance_at_start),
+            "chance_during": finite(plan.wet.chance_during),
+            "hourly": plan.wet.hourly,
+            "leads": plan.wet.leads,
+            "start_tyre": plan.wet.start_tyre,
+            "calls": plan.wet.calls,
+            "source": plan.wet.source,
+        },
         tyres={
             "allocation": tyres.allocation,
             "race_reserved": tyres.race_reserved,

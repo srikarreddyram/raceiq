@@ -30,6 +30,7 @@ def upcoming():
 @pytest.fixture(autouse=True)
 def no_forecast(monkeypatch):
     monkeypatch.setattr(future, "_forecast", lambda *a, **k: None)
+    monkeypatch.setattr(future, "race_window_forecast", lambda *a, **k: None)
 
 
 def test_calendar_holds_unrun_rounds(upcoming):

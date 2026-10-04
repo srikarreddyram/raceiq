@@ -21,6 +21,7 @@ import { Card, ErrorState, SectionLabel, Stat } from "../../design/primitives";
 import { accentVars, teamAccent } from "../../design/theme";
 import { C, DISPLAY, F, NUM, compoundColor } from "../../design/tokens";
 import { LongRunsSection } from "../components/LongRuns";
+import { WetPlanCard } from "../components/WetPlan";
 import { RaceSelector, controlStyle, labelStyle, useRaceSelection } from "../components/RaceSelector";
 
 const pct = (v: number) => `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`;
@@ -459,19 +460,12 @@ export function PlannerView() {
 
       {p && !plan.loading && (
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          {p.conditions.rain_expected && (
-            <Card accent="#1F5FD1" style={{ padding: "14px 20px" }}>
-              <div style={{ fontFamily: F.body, fontSize: 13.5, color: C.text, lineHeight: 1.55 }}>
-                <b>Rain {p.conditions.rain_probability != null ? `likely (${Math.round(p.conditions.rain_probability * 100)}%)` : "expected"}.</b>{" "}
-                This is the dry baseline plan — intermediates and wets are a call made on the day, when the track actually gets wet.
-                Rain raises the chance of a safety car, which the hold windows below already account for.
-              </div>
-            </Card>
-          )}
+          {p.wet_plan?.leads && <WetPlanCard plan={p.wet_plan} />}
           <Card accent="var(--rq-accent)" style={{ padding: "22px 26px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
               <div>
                 <div style={{ ...labelStyle, marginBottom: 6 }}>
+                  {p.wet_plan?.leads ? "If the track stays dry · " : ""}
                   {driver ? `${driver.given_name} ${driver.family_name}` : p.driver_id} · starts P{p.grid_position}
                   {grid != null ? " (what-if)" : p.grid_is_expected ? " (expected — qualifying not run)" : ""}
                 </div>
@@ -491,6 +485,7 @@ export function PlannerView() {
             </div>
             <PlanEdge plan={p} />
           </Card>
+          {p.wet_plan && !p.wet_plan.leads && <WetPlanCard plan={p.wet_plan} />}
 
           <Card style={{ padding: "20px 22px" }}>
             <SectionLabel style={{ marginBottom: 12 }}>The plan, lap by lap</SectionLabel>

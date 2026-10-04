@@ -49,6 +49,7 @@ from models.common.data import load_race_features
 from models.common.db import get_connection
 from race_plan.field import starting_gap_for_position
 from race_plan.vsc_threshold import WaitWindow, compute_wait_window
+from race_plan.wet import WetPlan, build_wet_plan
 from strategy_engine.scoring.score import StrategyScore, score_strategy
 from strategy_engine.search.candidates import generate_candidates
 from strategy_engine.tyre_pace import field_plan_cost, plan_cost, race_wear
@@ -148,6 +149,9 @@ class RacePlan:
     # The same car on a typical strategy for this circuit — the validated
     # number (race_plan/grid_sensitivity.py). expected_finish above is the
     # recommended plan's, which carries the simulation's strategy credit.
+    # What to do if the track is wet (race_plan/wet.py). None when rain is
+    # unlikely enough that the dry plan above is the plan.
+    wet: "WetPlan | None" = None
     typical_expected_finish: float | None = None
     typical_win_probability: float | None = None
     typical_points_probability: float | None = None
@@ -381,7 +385,7 @@ def build_race_plan(
     and the current entry list (race_plan/future.py).
     """
     from race_plan.field import build_pre_race_field, driver_race_pace, stop_patterns_for_race
-    from race_plan.future import future_setup, has_race_data
+    from race_plan.future import future_setup, has_race_data, race_hourly_forecast
 
     con = get_connection()
     try:
@@ -390,6 +394,7 @@ def build_race_plan(
         con.close()
 
     future_meta: dict = {}
+    wet_plan = None
     if run:
         state, race_rows = _starting_state(race_id, driver_id, grid_override)
         # Pre-race field, not the in-race snapshot: see race_plan/field.py for
@@ -408,6 +413,17 @@ def build_race_plan(
             else "Measured during the race.",
             "rain_probability": None,
         }
+        if rain is not None:
+            wet_plan = build_wet_plan(1.0, None, "override", 1.0) if rain else None
+        else:
+            # A race already run: it was wet or it wasn't — rain on the
+            # track's sensor, or the field on wet-weather tyres (a track can
+            # be soaked with the sensor reading dry: Turkey 2020 and 2021).
+            raining = race_rows.groupby("lap_number")["rainfall_flag"].max().fillna(False).astype(bool)
+            wet_tyres = race_rows.assign(w=race_rows["compound"].isin(["INTERMEDIATE", "WET"])).groupby("lap_number")["w"].mean()
+            wet_at_start = bool(raining[raining.index <= 3].any() or wet_tyres.get(1, 0.0) >= 0.5)
+            if raining.any() or (wet_tyres >= 0.5).any():
+                wet_plan = build_wet_plan(1.0 if wet_at_start else 0.0, None, "measured", 1.0)
         if conditions["source"] == "override":
             baseline = state.circuit_baseline_track_temp
             state = replace(
@@ -426,6 +442,11 @@ def build_race_plan(
             "note": cond.note,
             "rain_probability": cond.rain_probability,
         }
+        if rain is not None:
+            wet_plan = build_wet_plan(1.0, None, "override", 1.0) if rain else None
+        else:
+            hourly = race_hourly_forecast(entry)
+            wet_plan = build_wet_plan(cond.rain_probability, hourly, "forecast" if cond.source == "forecast" else "typical")
         future_meta = {
             "is_future": True,
             "grid_is_expected": grid_override is None and not entry["qualifying_run"],
@@ -535,6 +556,7 @@ def build_race_plan(
         typical_points_probability=typical.points_probability,
         typical_expected_points=typical.expected_points,
         rival_stops_source=stop_patterns.source if stop_patterns is not None else "rule",
+        wet=wet_plan,
     )
 
 

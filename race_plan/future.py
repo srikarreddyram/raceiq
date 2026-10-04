@@ -351,3 +351,53 @@ def future_setup(race_id: str, driver_id: str, grid: int | None, track_temp: flo
     anchor = weekend_pace(_form_or_zero(form, driver_id), quali.get(driver_id))
     entry = {**entry, "qualifying_run": bool(qualified)}
     return state, rivals, conditions, priors, anchor, entry
+
+
+def race_hourly_forecast(entry: dict) -> list[dict] | None:
+    """race_window_forecast for a calendar entry, inside the forecast horizon."""
+    date = pd.Timestamp(entry["date"]).date()
+    if not 0 <= (date - dt.date.today()).days <= FORECAST_HORIZON_DAYS:
+        return None
+    hour = int(str(entry.get("time_utc") or "13:00:00")[:2])
+    return race_window_forecast(float(entry["latitude"]), float(entry["longitude"]), date.isoformat(), hour, dt.datetime.now().strftime("%Y%m%d%H"))
+
+
+RACE_WINDOW_HOURS = 3  # a Grand Prix runs about two hours; one more for a delayed or suspended race
+
+
+@lru_cache(maxsize=64)
+def race_window_forecast(lat: float, lon: float, date: str, hour: int, _cache_hour: str) -> list[dict] | None:
+    """Open-Meteo's hour-by-hour forecast across the race: chance of rain
+    and how much, for each hour from the start. None outside the forecast
+    horizon or if the service is down."""
+    from ingestion.config import load_config
+    from ingestion.http import get_json
+
+    try:
+        data = get_json(
+            FORECAST_URL,
+            load_config(),
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "hourly": "precipitation_probability,precipitation",
+                "start_date": date,
+                "end_date": date,
+                "timezone": "UTC",
+            },
+        )
+    except Exception as exc:
+        logger.warning("forecast unavailable: %s", exc)
+        return None
+    hourly = data.get("hourly") or {}
+    times, probability, amount = hourly.get("time") or [], hourly.get("precipitation_probability") or [], hourly.get("precipitation") or []
+    out = []
+    for i in range(hour, min(hour + RACE_WINDOW_HOURS, len(times))):
+        out.append(
+            {
+                "hour_utc": times[i][-5:],
+                "rain_probability": None if i >= len(probability) or probability[i] is None else probability[i] / 100.0,
+                "rain_mm": None if i >= len(amount) or amount[i] is None else float(amount[i]),
+            }
+        )
+    return out or None

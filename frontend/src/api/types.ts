@@ -400,6 +400,7 @@ export type RacePlan = {
     used_in_practice: { compound: string; laps_run: number; first_session: string; sessions: string[] }[];
     warnings: string[];
   };
+  wet_plan: WetPlan | null;
 };
 
 export type StandingEntry = { id: string; name: string; team_id: string | null; points: number; wins: number };
@@ -469,4 +470,14 @@ export type LongRuns = {
   wear: { compound: string; practice: number | null; history: number; used: number }[];
   practice_in_plan: boolean;
   evidence: string;
+};
+
+export type WetPlan = {
+  chance_at_start: number | null;
+  chance_during: number | null;
+  hourly: { hour_utc: string; rain_probability: number | null; rain_mm: number | null }[];
+  leads: boolean;
+  start_tyre: string;
+  calls: { title: string; text: string }[];
+  source: "forecast" | "typical" | "measured" | "override";
 };

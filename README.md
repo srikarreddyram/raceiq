@@ -21,7 +21,7 @@ The web app (the "Pit Wall") has six pages:
 
 | Page | What it answers |
 |---|---|
-| **Race Weekend** | The plan for one driver at one race: starting tyre, pit windows, the "wait for a safety car or pit now" call for each stop, tyre sets to save, and the expected finish. Plus the weekend's practice long runs: push-lap pace, spread and tyre degradation per driver and team. Defaults to the next race on the calendar. |
+| **Race Weekend** | The plan for one driver at one race: starting tyre, pit windows, the "wait for a safety car or pit now" call for each stop, tyre sets to save, and the expected finish. When rain is likely it leads with a wet-race plan (intermediates or wets, when to go back to slicks, what to do if rain arrives mid-race), built from what teams did in every wet race since 2018. Plus the weekend's practice long runs: push-lap pace, spread and tyre degradation per driver and team. Defaults to the next race on the calendar. |
 | **Race Strategy** | Mid-race: from any lap of a race already run, what should this driver do now, and what happens if they try something else. |
 | **Circuit** | Track map, corners, and what each circuit does to tyres, safety cars and overtaking. |
 | **Car** | Where each car is fast (straight-line speed against race pace) and how hard it is on its tyres, with a written reading of why. |
@@ -97,6 +97,11 @@ really used, in races without rain or a red flag.
   with the finish on a typical strategy and says so.
 - Races with a red flag are out of reach: the stoppage hands everyone a
   free tyre change no forecast can see.
+- Wet races aren't simulated. Only about twenty since 2018 ran mostly on
+  wet-weather tyres, too few to fit a wet race the way the dry one is
+  fitted, and an hourly forecast can't say which laps will be wet. The
+  wet plan is a set of measured calls instead, with the number of races
+  behind each.
 
 Each of these checks is a script you can run (see [Checking it](#checking-it)).
 The reasoning, and the things tried and switched off, are written up next
