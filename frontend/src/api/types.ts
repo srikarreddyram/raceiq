@@ -481,3 +481,27 @@ export type WetPlan = {
   calls: { title: string; text: string }[];
   source: "forecast" | "typical" | "measured" | "override";
 };
+
+export type PredictedCar = { driver_id: string; grid: number; expected_finish: number; win_probability: number | null; actual: number | null };
+export type RecordedRace = {
+  race_id: string;
+  race_name: string | null;
+  recorded_at: string;
+  cars: number;
+  grid_real: boolean;
+  wet_plan_led: boolean;
+  score: {
+    cars: number;
+    mae: number;
+    mae_grid: number;
+    rank_corr: number;
+    rank_corr_grid: number;
+    winner_called: boolean;
+    podium_hits: number;
+    stops_right: number;
+    start_tyre_right: number;
+    wet_plan_led: boolean;
+    field_started_on_wet_tyres: number;
+  } | null;
+  top: PredictedCar[];
+};

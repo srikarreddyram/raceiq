@@ -35,6 +35,7 @@ import type {
   Team,
   TyreReport,
   LongRuns,
+  RecordedRace,
 } from "./types";
 
 const BASE_URL = import.meta.env.VITE_RACEIQ_API ?? "http://127.0.0.1:8000";
@@ -108,6 +109,7 @@ export const api = {
     request<LongRuns>(`/races/${raceId}/long-runs${session ? `?session=${session}` : ""}`),
 
   modelHealth: () => request<ModelHealth[]>("/monitoring/models"),
+  recordedPredictions: (season = 2026) => request<RecordedRace[]>(`/monitoring/predictions?season=${season}`),
   lapTimeOverlay: (raceId: string, driverId: string) =>
     request<LapTimeOverlay>(`/monitoring/lap-time?race_id=${raceId}&driver_id=${driverId}`),
   profileConfidence: (season: number) =>

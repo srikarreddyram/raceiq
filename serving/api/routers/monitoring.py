@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from car_profiles.season_profile import confidence_over_season
 from serving.api.db import get_db
-from serving.api.schemas import LapTimeOverlay, ModelHealth, ProfileConfidencePoint
+from serving.api.schemas import LapTimeOverlay, ModelHealth, ProfileConfidencePoint, RecordedRace
 
 router = APIRouter(prefix="/monitoring", tags=["monitoring"])
 
@@ -92,3 +92,26 @@ def car_profile_confidence(
     con: duckdb.DuckDBPyConnection = Depends(get_db),
 ) -> list[ProfileConfidencePoint]:
     return [ProfileConfidencePoint(**r) for r in confidence_over_season(con, season)]
+
+
+@router.get("/predictions", response_model=list[RecordedRace])
+def recorded_predictions(
+    season: int = Query(2026), con: duckdb.DuckDBPyConnection = Depends(get_db)
+) -> list[RecordedRace]:
+    """The planner's predictions written down before each race, scored
+    against the result once it's in (race_plan/prediction_log.py)."""
+    from race_plan.prediction_log import recorded_races
+
+    names = dict(con.execute("SELECT race_id, name FROM silver.calendar WHERE season = ?", [season]).fetchall())
+    out = []
+    for r in recorded_races(season):
+        s = r["score"]
+        score = None if s is None else {k: s[k] for k in PREDICTION_SCORE_FIELDS}
+        out.append({**{k: v for k, v in r.items() if k != "score"}, "race_name": names.get(r["race_id"]), "score": score})
+    return out
+
+
+PREDICTION_SCORE_FIELDS = (
+    "cars", "mae", "mae_grid", "rank_corr", "rank_corr_grid", "winner_called", "podium_hits",
+    "stops_right", "start_tyre_right", "wet_plan_led", "field_started_on_wet_tyres",
+)

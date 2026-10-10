@@ -610,6 +610,42 @@ class CalendarRound(BaseModel):
     has_results: bool
 
 
+class PredictedCar(BaseModel):
+    driver_id: str
+    grid: int
+    expected_finish: float
+    win_probability: float | None
+    actual: int | None  # finishing position, once the race is run
+
+
+class PredictionScore(BaseModel):
+    cars: int
+    mae: float
+    mae_grid: float
+    rank_corr: float
+    rank_corr_grid: float
+    winner_called: bool
+    podium_hits: int
+    stops_right: float
+    start_tyre_right: float
+    wet_plan_led: bool
+    field_started_on_wet_tyres: float
+
+
+class RecordedRace(BaseModel):
+    """A pre-race prediction and, once the race is run, its score —
+    race_plan/prediction_log.py."""
+
+    race_id: str
+    race_name: str | None
+    recorded_at: str
+    cars: int
+    grid_real: bool
+    wet_plan_led: bool
+    score: PredictionScore | None
+    top: list[PredictedCar]
+
+
 class LongRunDriver(BaseModel):
     driver_id: str
     code: str

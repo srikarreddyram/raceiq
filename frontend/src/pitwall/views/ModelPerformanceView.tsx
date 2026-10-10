@@ -334,6 +334,94 @@ function ProfileConfidence() {
   );
 }
 
+/**
+ * The live test: the planner's predictions, written down before each race
+ * (race_plan/prediction_log.py) and scored once the result is in. Unlike
+ * every backtest on this page, nothing about the result can have leaked
+ * into these.
+ */
+function LivePredictions() {
+  const races = useAsync(() => api.recordedPredictions(2026), []);
+  const name = (id: string) => id.split("_").slice(-1)[0].replace(/\b\w/g, (m) => m.toUpperCase());
+  const fmt = (v: number, d = 2) => v.toFixed(d);
+  const th = { fontFamily: F.mono, fontWeight: 700, fontSize: 10.5, letterSpacing: "0.08em", color: C.faint, textAlign: "left" as const, padding: "6px 10px" };
+  const td = { fontFamily: F.body, fontSize: 13, color: C.text, padding: "9px 10px", borderTop: `1px solid ${C.rule}`, verticalAlign: "top" as const };
+  return (
+    <Card accent="var(--rq-accent)" style={{ padding: "18px 20px" }}>
+      <SectionLabel style={{ marginBottom: 4 }}>Live predictions — written down before each race</SectionLabel>
+      <div style={{ fontFamily: F.body, fontSize: 12.5, color: C.muted, lineHeight: 1.55, marginBottom: 12 }}>
+        The planner's expected finish for every car, recorded once qualifying is in and before the start, then scored against
+        the result. Error is the average gap between predicted and real finishing order; the grid order is the yardstick a
+        prediction has to beat.
+      </div>
+      {races.loading && <TableSkeleton rows={2} columns={5} />}
+      {races.error && <ErrorState message={races.error} />}
+      {races.data && races.data.length === 0 && <EmptyState>NOTHING RECORDED YET — REFRESH_WEEKEND RECORDS ONCE QUALIFYING IS IN</EmptyState>}
+      {races.data && races.data.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={th}>RACE</th>
+              <th style={th}>RECORDED (UTC)</th>
+              <th style={th}>FINISHING ORDER</th>
+              <th style={th}>CALLS</th>
+              <th style={th}>PREDICTED TOP 5 (REAL FINISH)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {races.data.map((r) => (
+              <tr key={r.race_id}>
+                <td style={{ ...td, fontWeight: 700 }}>
+                  {r.race_name ?? r.race_id}
+                  <div style={{ fontFamily: F.mono, fontSize: 11, color: C.faint, fontWeight: 600 }}>
+                    {r.grid_real ? "REAL GRID" : "EXPECTED GRID"}
+                    {r.wet_plan_led ? " · WET PLAN LED" : ""}
+                  </div>
+                </td>
+                <td style={{ ...td, fontFamily: F.mono, fontSize: 12 }}>{r.recorded_at.slice(0, 16).replace("T", " ")}</td>
+                <td style={td}>
+                  {r.score ? (
+                    <>
+                      error <b>{fmt(r.score.mae)}</b> places <span style={{ color: C.muted }}>(grid {fmt(r.score.mae_grid)})</span>
+                      <div style={{ color: C.muted, fontSize: 12 }}>
+                        rank corr {fmt(r.score.rank_corr)} (grid {fmt(r.score.rank_corr_grid)}) · {r.score.cars} finishers
+                      </div>
+                    </>
+                  ) : (
+                    <span style={{ fontFamily: F.mono, fontSize: 11.5, fontWeight: 700, color: C.amber }}>AWAITING THE RESULT</span>
+                  )}
+                </td>
+                <td style={td}>
+                  {r.score ? (
+                    <>
+                      winner {r.score.winner_called ? "✓" : "✗"} · podium {r.score.podium_hits}/3
+                      <div style={{ color: C.muted, fontSize: 12 }}>
+                        stops {Math.round(r.score.stops_right * 100)}% · start tyre {Math.round(r.score.start_tyre_right * 100)}%
+                        {r.wet_plan_led ? ` · field on wet tyres at the start ${Math.round(r.score.field_started_on_wet_tyres * 100)}%` : ""}
+                      </div>
+                    </>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                <td style={{ ...td, fontFamily: F.mono, fontSize: 12 }}>
+                  {r.top.map((t, i) => (
+                    <div key={t.driver_id}>
+                      {i + 1}. {name(t.driver_id)} P{t.expected_finish.toFixed(1)}
+                      {t.win_probability != null && i < 3 ? ` · ${Math.round(t.win_probability * 100)}% win` : ""}
+                      {t.actual != null ? <b> → P{t.actual}</b> : ""}
+                    </div>
+                  ))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  );
+}
+
 export function ModelPerformanceView() {
   const health = useAsync(() => api.modelHealth(), []);
   const [selected, setSelected] = useState("lap_time_prediction");
@@ -349,6 +437,10 @@ export function ModelPerformanceView() {
       <div style={{ fontFamily: F.mono, fontSize: 10, letterSpacing: "0.14em", color: C.faint, marginBottom: 20 }}>
         {active ? `EVALUATED ${active.evaluated_at.slice(0, 16).replace("T", " ")} UTC · ` : ""}CURRENT / PROMOTED BASELINE ·
         REFRESH WITH MONITORING.RUN
+      </div>
+
+      <div style={{ marginBottom: 18 }}>
+        <LivePredictions />
       </div>
 
       {health.error && <ErrorState message={health.error} />}

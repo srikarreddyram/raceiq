@@ -171,6 +171,49 @@ def score(race_id: str) -> dict | None:
     return out
 
 
+def recorded_races(season: int) -> list[dict]:
+    """Every race of the season with a recording before its start: the
+    prediction's top cars, and its score once the result is in."""
+    out = []
+    for folder in sorted(PREDICTIONS_ROOT.glob(f"{season}_*"), key=lambda p: int(p.name.split("_")[1])):
+        pred = latest_before_start(folder.name)
+        if pred is None:
+            continue
+        s = score(folder.name)
+        actual = {}
+        if s is not None:
+            season_, rnd = (int(x) for x in folder.name.split("_"))
+            con = get_connection()
+            try:
+                actual = dict(con.execute(
+                    "SELECT driver_id, position FROM bronze.ergast_results WHERE season = ? AND round = ?", [season_, rnd]
+                ).fetchall())
+            finally:
+                con.close()
+        top = pred.nsmallest(5, "typical_finish")
+        out.append(
+            {
+                "race_id": folder.name,
+                "recorded_at": str(pred["recorded_at"].iloc[0]),
+                "cars": int(len(pred)),
+                "grid_real": bool(not pred["grid_is_expected"].any()),
+                "wet_plan_led": bool(pred["wet_leads"].any()),
+                "score": s,
+                "top": [
+                    {
+                        "driver_id": r.driver_id,
+                        "grid": int(r.grid),
+                        "expected_finish": float(r.typical_finish),
+                        "win_probability": None if pd.isna(r.win_probability) else float(r.win_probability),
+                        "actual": None if actual.get(r.driver_id) is None or pd.isna(actual.get(r.driver_id)) else int(actual[r.driver_id]),
+                    }
+                    for r in top.itertuples()
+                ],
+            }
+        )
+    return out
+
+
 def season(season: int) -> pd.DataFrame:
     rows = [score(p.name) for p in sorted(PREDICTIONS_ROOT.glob(f"{season}_*"))]
     return pd.DataFrame([r for r in rows if r])
