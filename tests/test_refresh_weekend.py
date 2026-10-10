@@ -55,3 +55,21 @@ def test_an_empty_response_is_not_content():
 def test_report_says_what_is_missing():
     report = RoundReport(2026, 16, "Singapore Grand Prix", "2026-10-11", fetched=["FP1"], not_available=["Q", "R"])
     assert "FP1" in report.line() and "not available yet: Q, R" in report.line()
+
+
+def test_a_sprint_weekend_fetches_its_own_sessions():
+    from ingestion.refresh_weekend import weekend_sessions
+
+    sprint = {"FirstPractice": {}, "SprintQualifying": {}, "Sprint": {}, "Qualifying": {}}
+    normal = {"FirstPractice": {}, "SecondPractice": {}, "ThirdPractice": {}, "Qualifying": {}}
+    assert weekend_sessions(sprint) == ("FP1", "SQ", "S", "Q", "R")
+    assert weekend_sessions(normal) == ("FP1", "FP2", "FP3", "Q", "R")
+    assert weekend_sessions({}) == ("FP1", "FP2", "FP3", "Q", "R")  # the calendar didn't say
+
+
+def test_a_run_round_waits_for_the_weather_archive(tmp_path):
+    config = replace(load_config(), raw_data_root=tmp_path)
+    _ingested(tmp_path, 2026, 1)
+    race = [{"round": "1", "date": "2026-03-08", "Circuit": {"circuitId": "albert_park"}}]
+    assert rounds_to_refresh(race, 2026, date(2026, 3, 10), config) == []  # inside the archive's lag
+    assert [r["round"] for r in rounds_to_refresh(race, 2026, date(2026, 3, 20), config)] == ["1"]  # come back for it

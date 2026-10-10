@@ -72,10 +72,11 @@ def _lap_seconds(value) -> float:
         return np.nan
 
 
-@lru_cache(maxsize=None)
-def qualifying_gaps(race_id: str) -> dict[str, float]:
-    """Each driver's best qualifying lap minus the session median, in
-    seconds, clipped. Empty when qualifying hasn't run (or isn't ingested)."""
+def qualifying_best_laps(race_id: str) -> dict[str, float]:
+    """Each driver's best qualifying lap, in seconds: the official
+    classification's Q1-Q3 times, or — before that's published, which can
+    lag the session by most of a day — the fastest lap in FastF1's timing
+    of the session. Empty when qualifying hasn't run."""
     season, rnd = (int(part) for part in race_id.split("_"))
     con = get_connection()
     try:
@@ -83,18 +84,39 @@ def qualifying_gaps(race_id: str) -> dict[str, float]:
             "SELECT driver_id, q1, q2, q3 FROM bronze.ergast_qualifying WHERE season = ? AND round = ?",
             [season, rnd],
         ).df()
+        if q.empty:
+            q = con.execute(
+                """
+                SELECT r.driver_id, MIN(l.lap_time_seconds) AS best
+                FROM bronze.fastf1_laps l
+                JOIN (SELECT DISTINCT driver_code, driver_id FROM bronze.ergast_results WHERE season = ?) r ON r.driver_code = l.driver
+                WHERE l.season = ? AND l.round = ? AND l.session_type = 'Q' AND l.lap_time_seconds IS NOT NULL
+                GROUP BY r.driver_id
+                """,
+                [season, season, rnd],
+            ).df()
+            return {} if len(q) < 5 else dict(zip(q["driver_id"], q["best"].astype(float)))
     finally:
         con.close()
-    if q.empty:
-        return {}
     best = q[["q1", "q2", "q3"]].map(_lap_seconds).min(axis=1)
+    return dict(zip(q["driver_id"], best.astype(float)))
+
+
+@lru_cache(maxsize=None)
+def qualifying_gaps(race_id: str) -> dict[str, float]:
+    """Each driver's best qualifying lap minus the session median, in
+    seconds, clipped. Empty when qualifying hasn't run (or isn't ingested)."""
+    laps = qualifying_best_laps(race_id)
+    if not laps:
+        return {}
+    best = pd.Series(laps, dtype=float)
     if best.notna().sum() < 5:
         return {}
     gap = (best - best.median()).clip(-QUALI_CLIP_SECONDS, QUALI_CLIP_SECONDS)
     # No time at all (didn't set one): as slow as the clip allows, which is
     # where a car with no lap starts and what it most likely has.
     gap = gap.fillna(QUALI_CLIP_SECONDS)
-    return dict(zip(q["driver_id"], gap.astype(float)))
+    return {driver: float(v) for driver, v in gap.items()}
 
 
 def weekend_pace(form: float, quali_gap: float | None) -> float:

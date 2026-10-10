@@ -112,7 +112,9 @@ def reconstruct_sets(race_id: str, driver_id: str) -> list[TyreSet]:
     if laps.empty:
         return []
 
-    session_order = {name: i for i, name in enumerate([*PRACTICE_SESSIONS, "Q"])}
+    # Weekend order on both formats: FP1-FP3 then Q, or FP1, sprint
+    # qualifying, the sprint, then Q.
+    session_order = {name: i for i, name in enumerate([*PRACTICE_SESSIONS, "SQ", "S", "Q"])}
     laps = laps.sort_values(
         by=["session_type", "stint_number", "lap_number"],
         key=lambda col: col.map(session_order) if col.name == "session_type" else col,

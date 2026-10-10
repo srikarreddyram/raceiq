@@ -48,9 +48,28 @@ from ingestion.raw_writer import write_json
 
 logger = logging.getLogger(__name__)
 
-WEEKEND_SESSIONS = ("FP1", "FP2", "FP3", "Q", "R")
+# The calendar's name for each session, and FastF1's. A sprint weekend has
+# FP1, sprint qualifying, the sprint and qualifying — no FP2 or FP3.
+SCHEDULE_SESSIONS = (
+    ("FirstPractice", "FP1"),
+    ("SecondPractice", "FP2"),
+    ("ThirdPractice", "FP3"),
+    ("SprintQualifying", "SQ"),
+    ("Sprint", "S"),
+    ("Qualifying", "Q"),
+)
+WEEKEND_SESSIONS = ("FP1", "FP2", "FP3", "Q", "R")  # when the calendar doesn't list the sessions
 # First practice is two days before the race; one more for time zones.
 WEEKEND_LEAD_DAYS = 3
+# Open-Meteo's archive runs a few days behind; asking for a race inside
+# that is an error, not an empty answer.
+WEATHER_ARCHIVE_LAG_DAYS = 6
+
+
+def weekend_sessions(race: dict) -> tuple[str, ...]:
+    """The sessions this weekend has, from the calendar, plus the race."""
+    listed = tuple(code for key, code in SCHEDULE_SESSIONS if key in race)
+    return (listed + ("R",)) if listed else WEEKEND_SESSIONS
 
 
 @dataclass
@@ -61,11 +80,13 @@ class RoundReport:
     race_date: str
     fetched: list[str] = field(default_factory=list)
     not_available: list[str] = field(default_factory=list)
+    predictions: str | None = None  # where the pre-race predictions were written
 
     def line(self) -> str:
         got = ", ".join(self.fetched) or "nothing new"
         missing = f"   not available yet: {', '.join(self.not_available)}" if self.not_available else ""
-        return f"R{self.round_number:02d} {self.name} ({self.race_date}): {got}{missing}"
+        recorded = f"\n    pre-race predictions recorded: {self.predictions}" if self.predictions else ""
+        return f"R{self.round_number:02d} {self.name} ({self.race_date}): {got}{missing}{recorded}"
 
 
 def rounds_to_refresh(races: list[dict], season: int, today: date, config: IngestionConfig) -> list[dict]:
@@ -79,6 +100,10 @@ def rounds_to_refresh(races: list[dict], season: int, today: date, config: Inges
             complete = _exists(config, "ergast", str(season), round_number, "results.json") and _exists(
                 config, "fastf1", str(season), round_number, "R", "results.parquet"
             )
+            # The weather archive catches up a week later: come back for it.
+            circuit_id = race.get("Circuit", {}).get("circuitId")
+            if circuit_id and (today - race_date).days >= WEATHER_ARCHIVE_LAG_DAYS:
+                complete = complete and _exists(config, "weather", circuit_id, f"{race['date']}_{race['date']}.json")
             if not complete:
                 chosen.append(race)
         elif (race_date - today).days <= WEEKEND_LEAD_DAYS:
@@ -130,32 +155,33 @@ def refresh_round(season: int, race: dict, config: IngestionConfig, today: date)
 
     _refresh_ergast(season, round_number, config, report)
 
-    for session_type in WEEKEND_SESSIONS:
+    for session_type in weekend_sessions(race):
         if _exists(config, "fastf1", str(season), str(round_number), session_type, "results.parquet"):
             continue
         try:
             _backfill_fastf1(season, round_number, config, session_type)
         except Exception as error:
-            # Not run yet, or not a session this weekend has (a sprint
-            # weekend has no FP2 or FP3).
+            # Not run yet, or not published yet.
             logger.info("FastF1 %s not available for %s round %s: %s", session_type, season, round_number, error)
         if _exists(config, "fastf1", str(season), str(round_number), session_type, "results.parquet"):
             report.fetched.append(session_type)
         else:
             report.not_available.append(session_type)
 
-    if date.fromisoformat(race["date"]) <= today:
+    race_day = date.fromisoformat(race["date"])
+    if race_day <= today:
         circuit = race["Circuit"]
         try:
             _backfill_openf1(season, round_number, race["date"], config)
-        except Exception:
-            logger.exception("OpenF1 ingestion failed for %s round %s", season, round_number)
-        try:
-            _backfill_weather(
-                circuit["circuitId"], float(circuit["Location"]["lat"]), float(circuit["Location"]["long"]), race["date"], config
-            )
-        except Exception:
-            logger.exception("Weather ingestion failed for %s round %s", season, round_number)
+        except Exception as error:
+            logger.info("OpenF1 not available for %s round %s: %s", season, round_number, error)
+        if (today - race_day).days >= WEATHER_ARCHIVE_LAG_DAYS:
+            try:
+                _backfill_weather(
+                    circuit["circuitId"], float(circuit["Location"]["lat"]), float(circuit["Location"]["long"]), race["date"], config
+                )
+            except Exception as error:
+                logger.info("Weather archive not available for %s round %s: %s", season, round_number, error)
     return report
 
 
@@ -169,7 +195,25 @@ def rebuild_warehouse() -> None:
     gold.run()
 
 
-def refresh(season: int, round_number: int | None = None, rebuild: bool = True, today: date | None = None) -> list[RoundReport]:
+def record_predictions(report: RoundReport, today: date) -> None:
+    """Write down the planner's predictions (race_plan/prediction_log.py)
+    for an upcoming race whose qualifying is in — the grid is known, and
+    the race can't have leaked into them."""
+    from race_plan.prediction_log import record
+    from race_plan.weekend_pace import qualifying_gaps
+
+    race_id = f"{report.season}_{report.round_number}"
+    if date.fromisoformat(report.race_date) < today or not qualifying_gaps(race_id):
+        return
+    try:
+        report.predictions = str(record(race_id))
+    except (ValueError, RuntimeError) as error:  # already run, or nothing plannable
+        logger.info("No predictions recorded for %s: %s", race_id, error)
+
+
+def refresh(
+    season: int, round_number: int | None = None, rebuild: bool = True, today: date | None = None, record: bool = True
+) -> list[RoundReport]:
     config = load_config()
     today = today or date.today()
 
@@ -187,6 +231,9 @@ def refresh(season: int, round_number: int | None = None, rebuild: bool = True, 
     if rebuild and any(r.fetched for r in reports):
         logger.info("Rebuilding Bronze, Silver and Gold")
         rebuild_warehouse()
+    if rebuild and record:
+        for report in reports:
+            record_predictions(report, today)
     return reports
 
 
@@ -197,6 +244,7 @@ def main() -> None:
     parser.add_argument("--round", type=int, dest="round_number", help="One round, whatever its date")
     parser.add_argument("--no-rebuild", action="store_true", help="Fetch only; don't rebuild Bronze/Silver/Gold")
     parser.add_argument("--rebuild-only", action="store_true", help="Don't fetch; rebuild Bronze/Silver/Gold from disk")
+    parser.add_argument("--no-record", action="store_true", help="Don't record pre-race predictions for an upcoming race")
     args = parser.parse_args()
 
     if args.rebuild_only:
@@ -204,7 +252,7 @@ def main() -> None:
         print("\nWarehouse rebuilt. Restart the API (scripts/dev.sh) so the planner reads the new data.")
         return
 
-    reports = refresh(args.season, args.round_number, rebuild=not args.no_rebuild)
+    reports = refresh(args.season, args.round_number, rebuild=not args.no_rebuild, record=not args.no_record)
 
     print()
     if not reports:

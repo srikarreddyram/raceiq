@@ -180,7 +180,8 @@ scripts/refresh_weekend.sh
 This fetches whatever the current weekend has produced so far (practice,
 qualifying, the race), catches up any earlier round that was missed, and
 rebuilds the warehouse. Run it after qualifying and the planner switches
-from the expected grid to the real one. Restart `scripts/dev.sh`
+from the expected grid to the real one, and the planner's predictions for
+the race are recorded so they can be scored afterwards. Restart `scripts/dev.sh`
 afterwards; the API keeps plans in memory.
 
 A plan from the command line:
@@ -203,6 +204,11 @@ uv run python -m strategy_engine.validate_in_race      # in-race accuracy
 uv run python -m strategy_engine.validate_in_race --season 2026 --rounds 1-15
 uv run python -m strategy_engine.validate_in_race --oracle-rivals  # ceiling: rivals' real stops known
 uv run python -m monitoring.run                        # input drift and live model accuracy
+
+# The live test: write the planner's predictions down before a race, score them after.
+uv run python -m race_plan.prediction_log record 2026_17    # done automatically by refresh_weekend once qualifying is in
+uv run python -m race_plan.prediction_log score 2026_17
+uv run python -m race_plan.prediction_log season 2026
 ```
 
 ## Project layout

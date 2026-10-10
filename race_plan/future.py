@@ -261,7 +261,16 @@ def qualifying_order(con: duckdb.DuckDBPyConnection, season: int, rnd: int) -> d
         "SELECT driver_id, position FROM bronze.ergast_qualifying WHERE season = ? AND round = ? ORDER BY position",
         [season, rnd],
     ).fetchall()
-    return {driver: int(pos) for driver, pos in rows if pos is not None}
+    if rows:
+        return {driver: int(pos) for driver, pos in rows if pos is not None}
+    # Before the official classification is published: the order of best
+    # laps in FastF1's timing. At Sepang 2026 that put 82% of drivers in
+    # their official slot and the rest within a place (the official order
+    # within the top ten uses Q3 times only).
+    from race_plan.weekend_pace import qualifying_best_laps
+
+    best = qualifying_best_laps(f"{season}_{rnd}")
+    return {driver: i + 1 for i, (driver, _) in enumerate(sorted(best.items(), key=lambda kv: kv[1]))}
 
 
 def _grid_slots(order: dict[str, int], drivers: list[str], ours: str, our_slot: int) -> dict[str, int]:
