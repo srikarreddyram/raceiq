@@ -20,18 +20,26 @@ def test_wet_race_facts_say_what_teams_do():
 
 def test_no_wet_plan_when_rain_is_unlikely_and_it_leads_when_likely():
     assert build_wet_plan(WET_PLAN_PROBABILITY - 0.05, [{"hour_utc": "13:00", "rain_probability": 0.1, "rain_mm": 0.0}]) is None
-    maybe = build_wet_plan(0.35, [{"hour_utc": "13:00", "rain_probability": 0.35, "rain_mm": 0.2}])
-    assert maybe is not None and not maybe.leads
-    likely = build_wet_plan(0.9, [{"hour_utc": "13:00", "rain_probability": WET_PLAN_LEADS + 0.4, "rain_mm": 1.0}])
+    maybe = build_wet_plan(0.65, [{"hour_utc": "13:00", "rain_probability": 0.65, "rain_mm": 0.2}])
+    assert maybe is not None and not maybe.leads  # Singapore 2026's forecast: the race was dry
+    likely = build_wet_plan(0.95, [{"hour_utc": "13:00", "rain_probability": 0.95, "rain_mm": 1.0}])
     assert likely.leads and likely.start_tyre == "INTERMEDIATE"
-    assert [c["title"].split()[0] for c in likely.calls][:2] == ["Start", "Back"]
+    titles = [c["title"].split()[0] for c in likely.calls]
+    assert titles[0] == "How" and titles[1:3] == ["Start", "Back"]  # the forecast's track record comes first
+
+
+def test_a_forecast_carries_its_track_record_and_a_real_race_doesnt():
+    forecast = build_wet_plan(0.65, [{"hour_utc": "13:00", "rain_probability": 0.65, "rain_mm": 0.2}])
+    assert "none of the" in forecast.calls[0]["text"]
+    measured = build_wet_plan(1.0, None, "measured", 1.0)
+    assert not any(c["title"].startswith("How far") for c in measured.calls)
 
 
 def test_rain_later_in_the_race_still_brings_the_plan():
     # Dry at the start, a storm forecast for the second hour.
     plan = build_wet_plan(0.1, [{"hour_utc": "13:00", "rain_probability": 0.1, "rain_mm": 0.0},
-                                {"hour_utc": "14:00", "rain_probability": 0.8, "rain_mm": 2.5}])
-    assert plan is not None and plan.leads and plan.chance_during == pytest.approx(0.8)
+                                {"hour_utc": "14:00", "rain_probability": 0.95, "rain_mm": 2.5}])
+    assert plan is not None and plan.leads and plan.chance_during == pytest.approx(0.95)
 
 
 def test_the_planner_carries_it_for_wet_and_not_for_dry_races():

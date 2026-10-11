@@ -342,6 +342,21 @@ def _plan_for_starting_compound(
     return scored[0], scored
 
 
+# The planner makes fewer stops than teams (about 1.2 a car against 1.6),
+# and that is a disagreement, not a bug to tune away. Where it prefers a
+# one-stop it does so clearly — Austria 2025: best one-stop P3.81, best
+# two-stop P4.27; Hungary 2025: P4.84 against P6.04 — and real results
+# side with it: in the 59 races of 2022-26 with both one- and two-
+# stoppers, one-stoppers finished 2.0 +/- 0.2 places better than expected
+# relative to two-stoppers, and 1.0 +/- 0.4 better even in the 18 races
+# most of the field two-stopped. Some two-stops are forced by damage or a
+# puncture, so that overstates the gap; nothing in it says the extra stop
+# pays. Tried and not the cause: stronger tyre wear (up to 2x), the
+# compounds' fresh-tyre pace, and the real cost of a stop (the old figure
+# overcharged by 2 s on average). The one known blind spot: a tyre-life
+# limit set for a race (Qatar 2025's 25 laps) isn't in the data, so the
+# planner can plan a one-stop the rules didn't allow.
+#
 # Starting tyres whose best plans score within this fraction of the top
 # one are a tie — the same tolerance compound_choice_is_decisive uses.
 START_TIE_TOLERANCE = 0.02

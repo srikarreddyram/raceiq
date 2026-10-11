@@ -38,8 +38,46 @@ from models.common.db import get_connection
 
 WET_COMPOUNDS = ("INTERMEDIATE", "WET")
 SLICKS = ("SOFT", "MEDIUM", "HARD")
-WET_PLAN_PROBABILITY = 0.3  # show the wet plan from this chance of rain at the start
-WET_PLAN_LEADS = 0.5  # and lead with it, ahead of the dry plan, from this one
+# How far to trust a forecast (race_plan/rain_forecast_check.py). The
+# archived race-day forecast for every race since 2024 that has one (60),
+# its chance of rain around the start against what happened:
+#
+#     forecast    races   rain fell   field on wet-weather tyres
+#     0-10%         37       5%          none
+#     10-30%         7      43%          none
+#     30-50%         5      40%          none
+#     50-70%         3      none         none
+#     90-100%        8      88%          7 of 8
+#
+# Every race the field ran wet-weather tyres in was forecast at 90% or
+# more; none of the 52 below it was. The wet plan used to lead from 50%,
+# and did at Singapore 2026 on a 65% forecast — the race was dry. It now
+# leads from 90%, shows as a possibility from 50%, and carries this track
+# record. The archive keeps the freshest forecast for each hour, issued
+# hours before; a plan made the evening before is a little less sharp.
+WET_PLAN_PROBABILITY = 0.5  # show the wet plan from this chance of rain
+WET_PLAN_LEADS = 0.9  # and lead with it, ahead of the dry plan, from this one
+FORECAST_TRACK_RECORD = (
+    # (lowest chance, highest chance, races, races with the field on wet-weather tyres)
+    (0.0, 0.1, 37, 0),
+    (0.1, 0.3, 7, 0),
+    (0.3, 0.5, 5, 0),
+    (0.5, 0.9, 3, 0),
+    (0.9, 1.01, 8, 7),
+)
+
+
+def forecast_track_record(chance: float | None) -> str | None:
+    """What forecasts like this one have meant, in a sentence."""
+    if chance is None:
+        return None
+    for lo, hi, races, wet in FORECAST_TRACK_RECORD:
+        if lo <= chance < hi:
+            band = f"{lo * 100:.0f}-{min(hi, 1.0) * 100:.0f}%"
+            if wet == 0:
+                return f"Since 2024, none of the {races} races forecast at {band} around the start ran on wet-weather tyres."
+            return f"Since 2024, {wet} of the {races} races forecast at {band} around the start ran on wet-weather tyres at some point."
+    return None
 
 
 @dataclass
@@ -273,6 +311,9 @@ def build_wet_plan(
             ),
         }
     )
+    record = forecast_track_record(worst) if source in ("forecast", "typical") else None
+    if record:
+        calls.insert(0, {"title": "How far to trust this forecast", "text": record})
     return WetPlan(
         chance_at_start=chance_at_start,
         chance_during=during,

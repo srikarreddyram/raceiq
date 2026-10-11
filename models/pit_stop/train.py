@@ -1,7 +1,14 @@
 """Pit Stop Recommendation — PRD Section 11.3.
 
-Task: binary classification, `should_pit` — is this lap a pit lap? Target
-is `is_pit_lap`, already a Gold column; no target engineering needed here.
+Task: binary classification, `should_pit` — does the car pit at the end
+of this lap? Target `pits_this_lap`: the next lap starts a new stint
+(stints change only on a real tyre change, pipelines/silver/laps.py).
+
+It used to be gold's `is_pit_lap`, which is true on the in-lap AND the
+out-lap of every stop. The out-lap is trivial to spot from features the
+model sees (tyre age back to one, stint number up by one), so half the
+"pit laps" it was scored on were stops that had already happened, and its
+precision and recall were flattered by them. The in-lap is the decision.
 
 `pit_stop_duration` is deliberately excluded from the feature list even
 though it's in gold.race_features: it's only non-null *because* a row is
@@ -40,7 +47,7 @@ from models.common.features import CATEGORICAL_COLUMNS, apply_categorical_dtypes
 from models.common.splits import temporal_split
 from models.common.tracking import configure_experiment
 
-TARGET = "is_pit_lap"
+TARGET = "pits_this_lap"
 
 NUMERIC_FEATURES = [
     "tyre_age",
@@ -62,10 +69,12 @@ FEATURE_COLUMNS = NUMERIC_FEATURES + BOOLEAN_FEATURES + CATEGORICAL_COLUMNS
 
 def prepare_dataset() -> pd.DataFrame:
     df = load_race_features()
-    df = df.dropna(subset=[TARGET, "tyre_age"])
+    df = df.dropna(subset=["stint_number", "tyre_age"]).sort_values(["race_id", "driver_id", "lap_number"])
+    next_stint = df.groupby(["race_id", "driver_id"])["stint_number"].shift(-1)
+    # The last lap a car completes has no next lap: not a stop.
+    df[TARGET] = (next_stint > df["stint_number"]).fillna(False).astype(int)
     for col in BOOLEAN_FEATURES:
         df[col] = df[col].astype(int)
-    df[TARGET] = df[TARGET].astype(int)
     return apply_categorical_dtypes(df, CATEGORICAL_COLUMNS)
 
 
@@ -76,11 +85,17 @@ def main() -> None:
     train, val, test = temporal_split(df)
     print(f"train={len(train)} val={len(val)} test={len(test)} positive_rate={train[TARGET].mean():.3f}")
 
+    # A fixed 300 trees, not early stopping: on the in-lap target the
+    # validation season's PR-AUC fell after the FIRST tree, so early
+    # stopping kept one tree (test PR-AUC 0.29, every probability under
+    # 0.15). Picked on validation (2024) among six fixed settings: 300
+    # trees, 63 leaves, rebalanced classes — val 0.636, test 0.488.
     model = lgb.LGBMClassifier(
         objective="binary",
-        n_estimators=1000,
+        n_estimators=300,
         learning_rate=0.05,
         num_leaves=63,
+        min_child_samples=100,
         is_unbalance=True,
         random_state=42,
         # See models/win_probability/train.py's comment: random_state
@@ -89,14 +104,7 @@ def main() -> None:
         deterministic=True,
         force_row_wise=True,
     )
-    model.fit(
-        train[FEATURE_COLUMNS],
-        train[TARGET],
-        eval_set=[(val[FEATURE_COLUMNS], val[TARGET])],
-        eval_metric="average_precision",
-        categorical_feature=CATEGORICAL_COLUMNS,
-        callbacks=[lgb.early_stopping(50, verbose=False)],
-    )
+    model.fit(train[FEATURE_COLUMNS], train[TARGET], categorical_feature=CATEGORICAL_COLUMNS)
 
     test_proba = model.predict_proba(test[FEATURE_COLUMNS])[:, 1]
     test_pred = (test_proba >= 0.5).astype(int)

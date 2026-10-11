@@ -90,7 +90,14 @@ really used, in races without rain or a red flag.
 - The planner's pit laps are about as close to the laps real cars stop on
   as "pit when cars usually pit here" is (about 7 laps off either way).
 - It picks the stop count a driver really ran 50–60% of the time, and it
-  leans towards one-stops.
+  leans towards one-stops (about 1.2 a car against 1.6). Real results side
+  with it more than with the teams: in races with both, one-stoppers
+  finished 2.0 places better than expected relative to two-stoppers
+  (some two-stops are forced by damage, so that overstates it).
+- It doesn't know race-specific tyre rules, like Qatar 2025's 25-lap
+  limit, so it can plan a one-stop the rules didn't allow.
+- Rain: wet-weather tyres were only ever used in races forecast at 90%
+  or more around the start, so the wet plan leads only from 90%.
 - The simulation credits its recommended plan with about 1.6 places over a
   typical strategy, but drivers who really ran that plan's stop count
   finished no better (0.03 ± 0.33 places). So the Race Weekend page leads
