@@ -123,17 +123,44 @@ def latest_before_start(race_id: str) -> pd.DataFrame | None:
     return None
 
 
+def race_result(race_id: str) -> tuple[pd.DataFrame, str]:
+    """Each car's finishing position and whether it was classified, and
+    where that came from. The official result can take a day to be
+    published; until then it's worked out from the lap data — laps
+    completed, then position at the end of the car's last lap, classified
+    from 90% of the winner's distance (the sporting rule). That reproduces
+    the official order except for penalties applied after the flag."""
+    season, rnd = (int(x) for x in race_id.split("_"))
+    con = get_connection()
+    try:
+        official = con.execute(
+            "SELECT driver_id, position, status FROM bronze.ergast_results WHERE season = ? AND round = ?", [season, rnd]
+        ).df()
+        laps = con.execute(
+            "SELECT driver_id, lap_number, current_position FROM gold.lap_features WHERE race_id = ?", [race_id]
+        ).df()
+    finally:
+        con.close()
+    if not official.empty:
+        official["classified"] = official["status"].map(is_classified)
+        return official[["driver_id", "position", "classified"]], "official"
+    if laps.empty:
+        return pd.DataFrame(columns=["driver_id", "position", "classified"]), "none"
+    last = laps.sort_values("lap_number").groupby("driver_id").tail(1)
+    last = last.sort_values(["lap_number", "current_position"], ascending=[False, True]).reset_index(drop=True)
+    last["position"] = last.index + 1
+    last["classified"] = last["lap_number"] >= int(0.9 * laps["lap_number"].max())
+    return last[["driver_id", "position", "classified"]], "provisional, from the lap data"
+
+
 def score(race_id: str) -> dict | None:
     """The pre-race prediction against what happened."""
     pred = latest_before_start(race_id)
     if pred is None:
         return None
-    season, rnd = (int(x) for x in race_id.split("_"))
+    results, result_source = race_result(race_id)
     con = get_connection()
     try:
-        results = con.execute(
-            "SELECT driver_id, position, status FROM bronze.ergast_results WHERE season = ? AND round = ?", [season, rnd]
-        ).df()
         stints = con.execute(
             """
             SELECT driver_id, MAX(stint_number) - 1 AS stops,
@@ -146,7 +173,7 @@ def score(race_id: str) -> dict | None:
         con.close()
     if results.empty:
         return None
-    results = results[results["status"].map(is_classified)]
+    results = results[results["classified"]]
     df = pred.merge(results[["driver_id", "position"]], on="driver_id").merge(stints, on="driver_id", how="left", suffixes=("", "_real"))
     if df.empty:
         return None
@@ -155,6 +182,7 @@ def score(race_id: str) -> dict | None:
     out = {
         "race_id": race_id,
         "recorded_at": pred["recorded_at"].iloc[0],
+        "result_source": result_source,
         "cars": len(df),
         "grid_was_real": bool(not pred["grid_is_expected"].any()),
         "mae": float((df["typical_finish"].rank() - df["actual"]).abs().mean()),
@@ -182,14 +210,8 @@ def recorded_races(season: int) -> list[dict]:
         s = score(folder.name)
         actual = {}
         if s is not None:
-            season_, rnd = (int(x) for x in folder.name.split("_"))
-            con = get_connection()
-            try:
-                actual = dict(con.execute(
-                    "SELECT driver_id, position FROM bronze.ergast_results WHERE season = ? AND round = ?", [season_, rnd]
-                ).fetchall())
-            finally:
-                con.close()
+            result, _ = race_result(folder.name)
+            actual = dict(zip(result["driver_id"], result["position"]))
         top = pred.nsmallest(5, "typical_finish")
         out.append(
             {
@@ -220,7 +242,7 @@ def season(season: int) -> pd.DataFrame:
 
 
 def _print_score(s: dict) -> None:
-    print(f"{s['race_id']} — recorded {s['recorded_at']} — {s['cars']} classified cars, grid {'real' if s['grid_was_real'] else 'expected'}")
+    print(f"{s['race_id']} — recorded {s['recorded_at']} — {s['cars']} classified cars, grid {'real' if s['grid_was_real'] else 'expected'}, result {s['result_source']}")
     print(f"  finishing order   error {s['mae']:.2f} places (grid order {s['mae_grid']:.2f})   rank corr {s['rank_corr']:.2f} (grid {s['rank_corr_grid']:.2f})")
     print(f"  winner called {'yes' if s['winner_called'] else 'no'}   podium {s['podium_hits']}/3")
     print(f"  stop count right {s['stops_right']:.0%}   start tyre right {s['start_tyre_right']:.0%}")
