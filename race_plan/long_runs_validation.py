@@ -13,9 +13,9 @@ rain or a red flag. Three questions:
   Q3  Does the field's practice degradation predict how hard the race is
       on tyres (per compound), better than history (season rate x
       circuit factor)?
-      -> correlation 0.68 against 0.37 (softs 0.76 against 0.25). Used:
-         tyre_pace.race_wear blends 0.32 x practice + 0.54 x history,
-         error 0.0310 -> 0.0253 s/lap per lap, each weekend predicted from
+      -> correlation 0.58 against 0.37-0.43 on weekends with 30+ long-run laps on the compound. Used:
+         tyre_pace.race_wear blends 0.26 x practice + 0.68 x history,
+         error 0.0265 -> 0.0229 s/lap per lap, each weekend predicted from
          the others (fitted at the end of this script).
   Q2  Does a team's practice degradation against the field's predict its
       race degradation against the field's?

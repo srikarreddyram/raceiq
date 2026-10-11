@@ -532,6 +532,9 @@ class RacePlanResponse(BaseModel):
     starting_compound: str
     compound_sequence: list[str]
     compound_choice_is_decisive: bool
+    # "simulation", or "most common start here" when the starting tyres tied (race_plan.plan.choose_start_tyre)
+    start_tyre_basis: str
+    start_tyre_share: float | None  # share of cars at this circuit that started on the chosen tyre
     stops: list[PlannedStopOut]
     # The recommended plan, as the simulation scores it — including the
     # credit it gives the plan's strategy, which real races don't bear out

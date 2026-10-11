@@ -41,13 +41,47 @@ from functools import lru_cache
 
 import numpy as np
 
-from car_profiles.degradation_curves import DRY_COMPOUNDS, circuit_wear_factor, season_model
+from car_profiles.degradation_curves import DRY_COMPOUNDS, circuit_wear_factor, compound_offsets, season_model
 from strategy_engine.field import RivalTrend
 from strategy_engine.state import RaceState
 from strategy_engine.tyre_baselines import RIVAL_FINAL_COMPOUND, StopPatterns, rival_stop_laps
 
 MAX_WEAR_AGE = 35  # matches monte_carlo.MAX_TYRE_AGE_FOR_SIMULATION
 TREND_WINDOW_MIDPOINT = 2  # recent pace is a 5-lap mean; its tyres were ~2 laps younger than now
+
+
+class TyreRates(dict):
+    """Wear per compound (seconds/lap per lap of tyre age), carrying the
+    compounds' fresh-tyre pace gaps as `offsets` (seconds/lap against the
+    medium; car_profiles.degradation_curves.compound_offsets).
+
+    A dict, so everything that reads wear rates — the lap-by-lap
+    simulation, the pages that show them — reads them as before; tyre_cost
+    is the one place the offsets are used. Treat it as read-only: the
+    caches below hand the same object to every caller.
+    """
+
+    def __init__(self, rates: dict[str, float], offsets: dict[str, float] | None = None):
+        super().__init__(rates)
+        self.offsets = dict(offsets or {})
+
+    def scaled(self, by: dict[str, float]) -> "TyreRates":
+        """New rates (compound -> rate), same offsets."""
+        return TyreRates(by, self.offsets)
+
+
+# The compounds' fresh-tyre pace gaps in every tyre cost — a switch so the
+# validations can measure them. Without them the planner priced tyres on
+# wear alone, so the hard (slowest wear) always looked best: it told 24
+# of 36 sampled 2025 cars to start on hards, where 5 really did, and every
+# car at Singapore 2026, where nobody ran a hard all race.
+COMPOUND_OFFSETS = True
+
+
+def _offsets_for(season: int | None) -> dict[str, float]:
+    if not COMPOUND_OFFSETS or season is None:
+        return {}
+    return compound_offsets(int(season))
 
 
 @lru_cache(maxsize=None)
@@ -61,8 +95,8 @@ def wear_rates(season: int | None) -> dict[str, float]:
             wear = season_model(s)["field_wear_seconds_per_lap"]
         except ValueError:
             continue
-        return {c: max(0.0, float(w)) for c, w in wear.items()}
-    return {c: 0.0 for c in DRY_COMPOUNDS}
+        return TyreRates({c: max(0.0, float(w)) for c, w in wear.items()}, _offsets_for(season))
+    return TyreRates({c: 0.0 for c in DRY_COMPOUNDS}, _offsets_for(season))
 
 
 # Scale the season's wear by how hard this circuit is on tyres
@@ -106,19 +140,23 @@ WEAR_SCALE = 1.0
 
 # This weekend's practice long runs, blended in where there are any
 # (race_plan/long_runs.py). How hard a race is on tyres, field-wide, per
-# compound, against what each estimate said beforehand — 60
-# weekend-compounds of 2025-26 with practice, races without rain or a red
-# flag, each weekend predicted from a fit on the others:
+# compound, against what each estimate said beforehand — 50
+# weekend-compounds of 2025-26 with at least 30 practice push laps on the
+# compound (long_runs.MIN_FIELD_DEGRADATION_LAPS), races without rain or
+# a red flag, each weekend predicted from a fit on the others:
 #
 #                                         error (s/lap per lap)   corr
-#     history: season rate x circuit            0.0310            0.37
-#     practice long runs alone                  0.0272            0.68
-#     0.32 x practice + 0.54 x history          0.0253
+#     history: season rate x circuit            0.0265            0.43
+#     practice long runs alone                  0.0257            0.58
+#     0.26 x practice + 0.68 x history          0.0229
+#
+# (Before the 30-lap floor: 60 weekend-compounds, 0.0310 -> 0.0253 with
+# 0.32 / 0.54. The floor came after Singapore 2026, where one practice
+# session's 18 hard-tyre laps zeroed the plan's hard wear.)
 #
 # Practice reads high (drivers aren't managing tyres over a race distance,
 # and the runs are short), hence the weight well under 1. It matters most
-# on softs (correlation 0.76 against 0.25 for history) and at a circuit
-# with no history at all. A team's own practice degradation against the
+# at a circuit with no history at all. A team's own practice degradation against the
 # field's says nothing about its race (correlation 0.02), so this is the
 # field's figure, the same for every car.
 #
@@ -131,8 +169,8 @@ WEAR_SCALE = 1.0
 # both on 2026). The evidence behind the blend:
 # race_plan/long_runs_validation.py.
 PRACTICE_WEAR = True
-PRACTICE_WEIGHT = 0.317
-HISTORY_WEIGHT = 0.540
+PRACTICE_WEIGHT = 0.257
+HISTORY_WEIGHT = 0.678
 
 
 @lru_cache(maxsize=None)
@@ -145,10 +183,12 @@ def race_wear(race_id: str) -> dict[str, float]:
     from race_plan.long_runs import field_degradation  # race_plan imports this module
 
     practice = field_degradation(race_id)
-    return {
-        c: max(0.0, PRACTICE_WEIGHT * practice[c] + HISTORY_WEIGHT * w) if practice.get(c) is not None else w
-        for c, w in wear.items()
-    }
+    return wear.scaled(
+        {
+            c: max(0.0, PRACTICE_WEIGHT * practice[c] + HISTORY_WEIGHT * w) if practice.get(c) is not None else w
+            for c, w in wear.items()
+        }
+    )
 
 
 @lru_cache(maxsize=None)
@@ -174,12 +214,18 @@ def history_wear(race_id: str) -> dict[str, float]:
     if not row:
         return wear
     factor = circuit_wear_factor(row[0], str(row[1])) * WEAR_SCALE
-    return {c: w * factor for c, w in wear.items()}
+    return wear.scaled({c: w * factor for c, w in wear.items()})
 
 
 def tyre_cost(compound: str | None, tyre_age: float, wear: dict[str, float]) -> float:
-    rate = wear.get(str(compound).upper(), 0.0) if compound else 0.0
-    return rate * float(np.clip(tyre_age, 0, MAX_WEAR_AGE))
+    """Seconds per lap a tyre costs against a new medium: its compound's
+    fresh-tyre gap (when `wear` carries one, see TyreRates) plus its wear
+    times its age."""
+    if not compound:
+        return 0.0
+    key = str(compound).upper()
+    offset = getattr(wear, "offsets", {}).get(key, 0.0)
+    return offset + wear.get(key, 0.0) * float(np.clip(tyre_age, 0, MAX_WEAR_AGE))
 
 
 def plan_cost(tyre_plan: list[dict], wear: dict[str, float]) -> float:

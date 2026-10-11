@@ -378,6 +378,8 @@ export type RacePlan = {
   starting_compound: string;
   compound_sequence: string[];
   compound_choice_is_decisive: boolean;
+  start_tyre_basis: string;
+  start_tyre_share: number | null;
   stops: PlannedStop[];
   expected_finish: number;
   win_probability: number;

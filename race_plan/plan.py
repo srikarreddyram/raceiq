@@ -39,6 +39,7 @@ Usage:
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 
@@ -157,6 +158,11 @@ class RacePlan:
     typical_points_probability: float | None = None
     typical_expected_points: float | None = None
     rival_stops_source: str = "rule"
+    # How the start tyre was picked (choose_start_tyre): "simulation", or
+    # "most common start here" when the simulation couldn't separate the
+    # options — with the share of cars at this circuit that started on it.
+    start_tyre_basis: str = "simulation"
+    start_tyre_share: float | None = None
 
     @property
     def compound_choice_is_decisive(self) -> bool:
@@ -336,6 +342,54 @@ def _plan_for_starting_compound(
     return scored[0], scored
 
 
+# Starting tyres whose best plans score within this fraction of the top
+# one are a tie — the same tolerance compound_choice_is_decisive uses.
+START_TIE_TOLERANCE = 0.02
+
+
+def choose_start_tyre(results: dict, stop_patterns: StopPatterns | None) -> tuple[str, str, float | None]:
+    """The tyre to start on: the simulation's best, unless it can't tell
+    the options apart — then the one most cars have started on at this
+    circuit (stop_patterns: real cars, this regulation era where there's
+    enough of it).
+
+    Why a tie-break and not the simulation's top score: in its cost model
+    the ORDER of stints costs nothing (hard-then-medium and
+    medium-then-hard, same lengths, price the same), so the start tyre
+    falls out of when it likes to stop. With one constant pace per car
+    there's no undercut, and a car that stops early rejoins behind cars it
+    can't pass — so it likes late stops, and only a hard lasts that long.
+    It told 43 of 60 sampled 2025 cars to start on hards, where 4 did; its
+    choice matched the car's real start 18% of the time. Real results don't
+    say the hard start is wrong (hard starters finished 0.5 +/- 0.3 places
+    better than medium starters against expectation, 59 races of 2022-26),
+    but nor do they say it's right — and inside the simulation's noise
+    it isn't a decision, so the planner doesn't pretend it is.
+
+    Measured on the same sampled cars (three per clean race, 2025 and
+    2026): the starting tyres tied for 37% of 2025 cars and 43% of 2026's,
+    and the plan's start tyre matched the car's real one 20% -> 30% of the
+    time on 2025 and 14% -> 38% on 2026. Stop counts don't change, and
+    finishing accuracy can't — only tied options are swapped. Where the
+    simulation's preference clears the noise, it still prefers late stops
+    on hards and matches the real start 18-19% of the time: that part is
+    the missing undercut, not something a tie-break can fix.
+    """
+    ranked = sorted(results.items(), key=lambda kv: -kv[1][0].strategy_score)
+    top_compound, (top, _) = ranked[0]
+    tied = [c for c, (b, _) in ranked if top.strategy_score - b.strategy_score <= START_TIE_TOLERANCE * max(top.strategy_score, 1e-9)]
+    if len(tied) < 2 or stop_patterns is None:
+        return top_compound, "simulation", None
+    starts = Counter(stints[0] for stints in stop_patterns.compounds if stints)
+    total = sum(starts.values())
+    if not total:
+        return top_compound, "simulation", None
+    # Among the tied tyres, the one most cars started on here; the
+    # simulation's score only breaks a tie in that count.
+    pick = max(tied, key=lambda c: (starts.get(c, 0), results[c][0].strategy_score))
+    return pick, "most common start here", starts.get(pick, 0) / total
+
+
 def _windows_from_candidates(best: StrategyScore, scored: list[StrategyScore]) -> list[PlannedStop]:
     """Turn the near-optimal candidates into one window per stop.
 
@@ -470,7 +524,8 @@ def build_race_plan(
     if not results:
         raise RuntimeError(f"No feasible race plan found for {driver_id} at {race_id}")
 
-    starting_compound, (best, scored) = max(results.items(), key=lambda kv: kv[1][0].strategy_score)
+    starting_compound, start_basis, start_share = choose_start_tyre(results, stop_patterns)
+    best, scored = results[starting_compound]
     stops = _windows_from_candidates(best, scored)
 
     # Our car as one of the field, on a real car's stops here — see
@@ -556,6 +611,8 @@ def build_race_plan(
         typical_points_probability=typical.points_probability,
         typical_expected_points=typical.expected_points,
         rival_stops_source=stop_patterns.source if stop_patterns is not None else "rule",
+        start_tyre_basis=start_basis,
+        start_tyre_share=start_share,
         wet=wet_plan,
     )
 
@@ -582,6 +639,9 @@ def format_plan(plan: RacePlan) -> str:
     lines.append("")
     if plan.compound_choice_is_decisive:
         lines.append(f"START ON   {plan.starting_compound}")
+    elif plan.start_tyre_basis != "simulation":
+        share = f", {plan.start_tyre_share * 100:.0f}% of starts here" if plan.start_tyre_share is not None else ""
+        lines.append(f"START ON   {plan.starting_compound}  (a tie in the simulation — the most common start here{share})")
     else:
         lines.append(
             f"START ON   {plan.starting_compound}  (NOT DECISIVE — all compounds within noise, see below)"

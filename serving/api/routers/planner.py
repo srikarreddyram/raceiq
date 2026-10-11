@@ -109,6 +109,8 @@ def get_race_plan(
         starting_compound=plan.starting_compound,
         compound_sequence=plan.compound_sequence,
         compound_choice_is_decisive=plan.compound_choice_is_decisive,
+        start_tyre_basis=plan.start_tyre_basis,
+        start_tyre_share=finite(plan.start_tyre_share),
         stops=[
             {
                 "stop_number": s.stop_number,
@@ -237,7 +239,7 @@ def get_calendar(
 LONG_RUN_EVIDENCE = (
     "What feeds the plan: the whole field's tyre degradation per compound, blended with the circuit's history. "
     "Across 2025-26 that predicts how hard a race is on its tyres better than history alone (correlation with the "
-    "race 0.68 against 0.37). Long-run pace and each team's own degradation don't feed it: once season form and "
+    "race 0.58 against 0.43, on weekends with at least 30 long-run laps on the compound). Long-run pace and each team's own degradation don't feed it: once season form and "
     "qualifying are known, pace adds nothing measurable, and a team's practice degradation against the field's says "
     "nothing about its race (correlation 0.02)."
 )

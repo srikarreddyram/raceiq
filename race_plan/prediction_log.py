@@ -82,6 +82,7 @@ def record(race_id: str, n_simulations: int = N_SIMULATIONS) -> Path:
                 "win_probability": p.typical_win_probability,
                 "points_probability": p.typical_points_probability,
                 "start_compound": p.starting_compound,
+                "start_tyre_basis": p.start_tyre_basis,
                 "stops": len(p.stops),
                 "stop_laps": ",".join(str(s.nominal_lap) for s in p.stops),
                 "stop_compounds": ",".join(s.compound for s in p.stops),

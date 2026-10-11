@@ -273,7 +273,8 @@ function Conditions({ plan }: { plan: RacePlan }) {
 }
 
 function StartingOptions({ plan }: { plan: RacePlan }) {
-  const best = plan.starting_options[0];
+  const best = plan.starting_options.find((o) => o.starting_compound === plan.starting_compound) ?? plan.starting_options[0];
+  const tieBreak = plan.start_tyre_basis !== "simulation";
   return (
     <Card style={{ padding: "18px 20px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
@@ -291,7 +292,10 @@ function StartingOptions({ plan }: { plan: RacePlan }) {
         >
           <TyreIcon compound={o.starting_compound} size={26} />
           <div>
-            <div style={{ fontFamily: F.body, fontWeight: 700, fontSize: 13.5, color: C.text }}>Start on {o.starting_compound.toLowerCase()}</div>
+            <div style={{ fontFamily: F.body, fontWeight: 700, fontSize: 13.5, color: C.text }}>
+              Start on {o.starting_compound.toLowerCase()}
+              {o === best && <span style={{ fontFamily: F.mono, fontSize: 10.5, color: C.faint, marginLeft: 8 }}>THE PLAN</span>}
+            </div>
             <div style={{ fontFamily: F.body, fontSize: 12, color: C.muted }}>{o.plan}</div>
           </div>
           <div style={{ ...NUM, fontSize: 13, color: C.text, textAlign: "right" }}>P{o.expected_finish.toFixed(1)}</div>
@@ -303,7 +307,11 @@ function StartingOptions({ plan }: { plan: RacePlan }) {
       <div style={{ fontFamily: F.body, fontSize: 12, color: C.muted, marginTop: 8, lineHeight: 1.55 }}>
         {plan.compound_choice_is_decisive
           ? "The best start beats the next by more than simulation noise."
-          : "These are within simulation noise of each other — the start tyre isn't what decides this race; the pit windows are."}
+          : tieBreak
+            ? `These are within simulation noise of each other, so the plan starts on what most cars have started on here — ${plan.starting_compound.toLowerCase()}${
+                plan.start_tyre_share != null ? `, ${Math.round(plan.start_tyre_share * 100)}% of starts` : ""
+              }. The start tyre isn't what decides this race; the pit windows are.`
+            : "These are within simulation noise of each other — the start tyre isn't what decides this race; the pit windows are."}
       </div>
     </Card>
   );

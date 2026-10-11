@@ -44,6 +44,11 @@ PRACTICE_SESSIONS = ("FP1", "FP2", "FP3")
 MIN_RUN_LAPS = 5
 PUSH_LAP_BAND = 0.015  # within 1.5% of the run's median
 MIN_DEGRADATION_LAPS = 6  # fewer push laps on a compound than this and no slope is fitted
+# The whole field's figure feeds the plan's tyre wear, so it needs more:
+# Singapore 2026's single practice session gave 18 hard-tyre push laps
+# from 7 cars, a slope of -0.22, and a blended hard wear of zero. A
+# typical weekend has 36 on hards, 100 on mediums.
+MIN_FIELD_DEGRADATION_LAPS = 30
 DRY_COMPOUNDS = ("SOFT", "MEDIUM", "HARD")
 
 
@@ -241,6 +246,6 @@ def field_degradation(race_id: str) -> dict[str, float | None]:
     out = {}
     for compound in DRY_COMPOUNDS:
         on = push[push["compound"] == compound]
-        raw = _slope(on["tyre_age"], on["lap_time"], on["run_id"])
+        raw = _slope(on["tyre_age"], on["lap_time"], on["run_id"]) if len(on) >= MIN_FIELD_DEGRADATION_LAPS else None
         out[compound] = None if raw is None else raw - fuel
     return out

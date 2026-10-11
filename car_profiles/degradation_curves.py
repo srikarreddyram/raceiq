@@ -279,3 +279,87 @@ def circuit_wear_factor(circuit_id: str, before_date: str) -> float:
     row = by.loc[circuit_id]
     shrunk = mu + tau2 / (tau2 + row["var"]) * (row["raw"] - mu)
     return float(np.clip(shrunk / mu, 0.25, 3.0)) if mu > 0 else 1.0
+
+
+# ---------------------------------------------------------------------------
+# How much faster each compound is on fresh tyres.
+#
+# season_model's compound intercepts come out physically backwards in some
+# seasons (softs slower than mediums by 0.29 s/lap in 2021), and the
+# reason is fuel: a soft stint usually runs first, at full tanks, and a
+# hard stint later, so any error in the fuel correction lands on the
+# compound comparison — and an error of 0.01 s/lap per lap of fuel is
+# 0.3 s over the thirty laps between two stints' midpoints, the size of
+# the effect itself. Measured here instead from the same driver in the
+# same race on two compounds, each stint's pace projected back to new
+# tyres with the season's wear rate, and — the important part — averaged
+# over cars that ran the two compounds in OPPOSITE orders. The fuel error
+# pushes those two groups in opposite directions, and cancels: the stint
+# run first reads 0.05-0.39 s slower than the one run second, whatever
+# the compound, in every season.
+#
+# Pooled per regulation era (seconds per lap against the medium, 90%
+# bootstrap interval over races):
+#     2022-25   soft -0.41 (-0.47 to -0.30)   hard +0.04 (-0.02 to +0.12)
+#     2026      soft  0.00 (-0.21 to +0.16)   hard +0.15 ( 0.00 to +0.33)
+#     2018-21   soft +0.08, hard -0.06 — softs slower than mediums is not
+#               physics. That era's top ten started on their used
+#               qualifying softs, which this can't separate out; it's
+#               left at zero rather than used.
+# ---------------------------------------------------------------------------
+
+OFFSET_MIN_PAIRS = 10  # per stint order; fewer and the era isn't estimated
+ERAS_WITHOUT_OFFSETS = ("2018-21",)
+
+
+def regulation_era(season: int) -> str:
+    return "2018-21" if season <= 2021 else "2022-25" if season <= 2025 else "2026"
+
+
+@lru_cache(maxsize=1)
+def _compound_offsets_by_era() -> dict[str, dict[str, float]]:
+    df = _green_laps()
+    stints = []
+    for season in sorted(df["season"].unique()):
+        try:
+            m = season_model(int(season))
+        except ValueError:
+            continue
+        g = df[(df["season"] == season) & df["tyre_age"].between(2, 15)].copy()
+        g["base"] = (
+            g["lap_time_seconds"]
+            - m["fuel_track_seconds_per_lap"] * g["lap_number"]
+            - g["compound"].map(m["field_wear_seconds_per_lap"]) * g["tyre_age"]
+        )
+        st = g.groupby(["race_id", "driver_id", "stint_number", "compound"]).agg(
+            base=("base", "median"), n=("base", "size"), mid=("lap_number", "mean")
+        ).reset_index()
+        st["era"] = regulation_era(int(season))
+        stints.append(st[st["n"] >= 5])
+    st = pd.concat(stints, ignore_index=True)
+
+    out = {}
+    for era, sub in st.groupby("era"):
+        offsets = {"MEDIUM": 0.0}
+        for compound in ("SOFT", "HARD"):
+            a, b = sub[sub["compound"] == compound], sub[sub["compound"] == "MEDIUM"]
+            pairs = a.merge(b, on=["race_id", "driver_id"], suffixes=("_a", "_b"))
+            pairs["delta"] = pairs["base_a"] - pairs["base_b"]
+            first = pairs[pairs["mid_a"] < pairs["mid_b"]]["delta"]
+            second = pairs[pairs["mid_a"] >= pairs["mid_b"]]["delta"]
+            if len(first) >= OFFSET_MIN_PAIRS and len(second) >= OFFSET_MIN_PAIRS:
+                offsets[compound] = float((first.median() + second.median()) / 2)
+            else:
+                offsets[compound] = 0.0
+        out[era] = offsets
+    return out
+
+
+def compound_offsets(season: int) -> dict[str, float]:
+    """Seconds per lap each compound is off the medium on new tyres, for
+    this season's regulation era (negative is quicker). Zero for an era
+    without a believable estimate."""
+    era = regulation_era(season)
+    if era in ERAS_WITHOUT_OFFSETS:
+        return {c: 0.0 for c in DRY_COMPOUNDS}
+    return dict(_compound_offsets_by_era().get(era, {c: 0.0 for c in DRY_COMPOUNDS}))
